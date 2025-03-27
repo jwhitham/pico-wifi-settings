@@ -7,7 +7,8 @@ library manages WiFi connections for your Pico application. It provides:
  - a background `async_context` service to automatically connect to them,
  - an optional [remote update service](doc/REMOTE.md), secured with AES-256, which allows
    you to update WiFi settings remotely,
- - an optional over-the-air (OTA) update service for uploading new firmware.
+ - an optional over-the-air (OTA) update service for uploading new firmware,
+ - a [Pico W setup app](doc/SETUP_APP.md) for first-time setup.
 
 You can store details for up to 16 hotspots, and update them
 at any time by USB or WiFi. This avoids any need to recompile Pico firmware
@@ -50,8 +51,8 @@ hotspots matching the SSID names and passwords in the file.
 
 You can try pico-wifi-settings without writing any code! The
 [setup app](doc/SETUP_APP.md) has an interactive, text mode user
-interface which you can access by USB. Once installed on your Pico.
-It allows you to search for WiFi hotspots and create/edit
+interface which you can access by USB. Once installed on your Pico,
+it allows you to search for WiFi hotspots and create/edit
 the WiFi settings file.
 
 # Example app

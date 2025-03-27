@@ -1,8 +1,8 @@
 # Setup app
 
 The pico-wifi-settings setup app has an interactive, text mode user
-interface which you can access by USB. Once installed on your Pico.
-It allows you to search for WiFi hotspots and create/edit
+interface which you can access by USB. Once installed on your Pico,
+it allows you to search for WiFi hotspots and create/edit
 the WiFi settings file.
 
 # Requirements
@@ -14,8 +14,11 @@ the WiFi settings file.
  
 # Installation
 
- - [Download the latest release .zip file here](/PLACEHOLDER)
+ - [Download the latest release .zip file here](https://github.com/jwhitham/pico-wifi-settings/releases)
  - Connect your Pico W to your computer with USB, holding down the BOOTSEL button
+ - Open the downloaded .zip file and find the correct file for your Pico device
+   - Pico W: use `setup_app__pico_w__<version>.uf2`
+   - Pico 2 W: use `setup_app__pico2_w__<version>.uf2`
  - Drag and drop the `.uf2` file for your Pico model from the zip file to your Pico device
  - Connect to Pico W using your serial terminal program
    - More instructions can be found in the [Getting Started
