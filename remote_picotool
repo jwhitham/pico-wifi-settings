@@ -1,0 +1,1402 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2025 Jack Whitham
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Remote update client for wifi-settings. Pico firmware built with the wifi-settings
+# library, an 'update_secret' and the -DWIFI_SETTINGS_REMOTE build option can be
+# remotely updated using this program. Run with --help for instructions,
+# or visit https://github.com/jwhitham/pico-wifi-settings
+#
+
+import argparse
+import asyncio
+import enum
+import hashlib
+import hmac
+import os
+import re
+import struct
+import socket
+import sys
+import traceback
+import typing
+from asyncio import StreamReader, StreamWriter
+from pathlib import Path
+from abc import abstractmethod
+
+URL =                       "https://github.com/jwhitham/pico-wifi-settings"
+PORT_NUMBER =               1404
+RESPONDER_REQUEST_MAGIC =  b"PWS?"
+RESPONDER_REPLY_MAGIC =    b"PWS:"
+BOARD_ID_SIZE =             8 
+
+CHALLENGE_SIZE =            15
+AUTHENTICATION_SIZE =       15
+AES_BLOCK_SIZE =            16
+DATA_HASH_SIZE =            7
+
+ID_GREETING =               70      # s->c
+ID_REQUEST =                71      # s<-c
+ID_CHALLENGE =              72      # s->c
+ID_AUTHENTICATION =         73      # s<-c
+ID_RESPONSE =               74      # s->c
+ID_ACKNOWLEDGE =            75      # s<-c
+ID_OK =                     76      # s->c
+ID_AUTH_ERROR =             77      # both
+ID_VERSION_ERROR =          78      # both
+ID_BAD_MSG_ERROR =          79      # both
+ID_BAD_PARAM_ERROR =        80      # s->c
+ID_BAD_HANDLER_ERROR =      81      # s->c
+ID_NO_SECRET_ERROR =        82      # s->c
+ID_CORRUPT_ERROR =          83      # s->c
+ID_UNKNOWN_ERROR =          84      # s->c
+ID_PICO_INFO_HANDLER =      120
+ID_UPDATE_HANDLER =         121
+ID_READ_HANDLER =           122
+ID_RESERVED_3 =             123
+ID_UPDATE_REBOOT_HANDLER =  124
+ID_FLASH_WRITE_HANDLER =    125
+ID_RESERVED_6 =             126
+ID_OTA_FIRMWARE_UPDATE_HANDLER = 127
+ID_FIRST_USER_HANDLER =     128
+ID_LAST_USER_HANDLER =      143
+
+ID_FIRST_HANDLER = ID_PICO_INFO_HANDLER
+NUM_HANDLERS = ID_LAST_USER_HANDLER + 1 - ID_FIRST_HANDLER
+HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
+
+PICO_ERROR_NOT_PERMITTED = -4
+MAX_WIFI_SETTINGS_FILE_SIZE = 4096
+
+# structures for ID_READ_HANDLER
+# struct wifi_settings_logical_range_t {
+#    void* start_address;
+#    uint32_t size;
+# };
+# struct read_parameter_t {
+#    wifi_settings_logical_range_t copy_from;
+# };
+READ_PARAMETER = struct.Struct("<II")
+
+# structures for ID_OTA_FIRMWARE_UPDATE_HANDLER:
+# #define WIFI_SETTINGS_OTA_HASH_SIZE 32
+# struct wifi_settings_flash_range_t {
+#    uint32_t start_address;
+#    uint32_t size;
+# };
+# typedef struct ota_firmware_update_parameter_t {
+#     wifi_settings_flash_range_t copy_from;
+#     wifi_settings_flash_range_t copy_to;
+#     uint8_t hash[WIFI_SETTINGS_OTA_HASH_SIZE];
+# } ota_firmware_update_parameter_t;
+OTA_FIRMWARE_UPDATE_PARAMETER = struct.Struct("<IIII")
+
+PROTOCOL_VERSION = 1
+AES_IV = b"\x00" * AES_BLOCK_SIZE
+PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
+
+FlashRange = typing.Tuple[int, int]
+
+try:
+    import pyaes # type: ignore
+except ImportError:
+    print("The pyaes module is required; please install it with 'pip install pyaes' or 'apt install python3-pyaes'")
+    sys.exit(1)
+
+
+def get_pad_bytes(data_size: int, block_size: int, pad_byte = b"\x00") -> bytes:
+    """Pad data so that it is a multiple of block_size."""
+    last_block_size = data_size % block_size
+    if last_block_size == 0:
+        return b""
+    pad = block_size - last_block_size
+    return pad_byte * pad
+
+class RemoteError(Exception):
+    """Base for all errors relating to issues with the remote system."""
+    pass
+
+class LocalError(Exception):
+    """Base for all errors relating to local issues e.g. incorrect parameters."""
+    pass
+
+class PicoError(RemoteError):
+    """Error with a code from src/common/pico_base_headers/include/pico/error.h"""
+    def __init__(self, code: int) -> None:
+        RemoteError.__init__(self, "Pico error code {} received: {}".format(
+            code, {
+            -1: "PICO_ERROR_GENERIC",
+            -2: "PICO_ERROR_TIMEOUT",
+            -3: "PICO_ERROR_NO_DATA",
+            -4: "PICO_ERROR_NOT_PERMITTED",
+            -5: "PICO_ERROR_INVALID_ARG",
+            -6: "PICO_ERROR_IO",
+            -7: "PICO_ERROR_BADAUTH",
+            -8: "PICO_ERROR_CONNECT_FAILED",
+            -9: "PICO_ERROR_INSUFFICIENT_RESOURCES",
+            -10: "PICO_ERROR_INVALID_ADDRESS",
+            -11: "PICO_ERROR_BAD_ALIGNMENT",
+            -12: "PICO_ERROR_INVALID_STATE",
+            -13: "PICO_ERROR_BUFFER_TOO_SMALL",
+            -14: "PICO_ERROR_PRECONDITION_NOT_MET",
+            -15: "PICO_ERROR_MODIFIED_DATA",
+            -16: "PICO_ERROR_INVALID_DATA",
+            -17: "PICO_ERROR_NOT_FOUND",
+            -18: "PICO_ERROR_UNSUPPORTED_MODIFICATION",
+            -19: "PICO_ERROR_LOCK_REQUIRED",
+            -20: "PICO_ERROR_VERSION_MISMATCH",
+            -21: "PICO_ERROR_RESOURCE_IN_USE",
+            }.get(code, "unknown")))
+        self.code = code
+
+class BadMessageError(RemoteError):
+    """Indicates an invalid request was received during the
+    unencrypted communication stage."""
+    def __init__(self, received_msg_type: int, expected_msg_type: int) -> None:
+        RemoteError.__init__(self)
+        self.received_msg_type = received_msg_type
+        self.expected_msg_type = expected_msg_type
+
+    def __str__(self) -> str:
+        return (f"BadMessageError(received {self.received_msg_type} " +
+                f"expected {self.expected_msg_type})")
+
+class BadVersionError(RemoteError):
+    """Indicates an invalid version number was received during the
+    unencrypted communication stage."""
+    def __init__(self, version: int) -> None:
+        RemoteError.__init__(self)
+        self.version = version
+
+    def __str__(self) -> str:
+        return f"BadVersionError({self.version})"
+
+class AuthenticationError(RemoteError):
+    """Indicates that the client and server don't share the same update secret."""
+    def __str__(self) -> str:
+        return ("AuthenticationError: the given --secret "
+            "does not match the update_secret on the board")
+
+class CorruptedMessageError(RemoteError):
+    """Indicates corruption in the encrypted communication stage."""
+    def __init__(self, hint: str) -> None:
+        RemoteError.__init__(self)
+        self.hint = hint
+
+    def __str__(self) -> str:
+        return f"CorruptedMessageError({self.hint})"
+
+class BadParameterError(RemoteError):
+    """Indicates parameters for the handler are invalid."""
+    def __str__(self) -> str:
+        return "BadParameterError()"
+
+class HandlerFailedError(RemoteError):
+    """Indicates handler returned CALLBACK_FAILURE_ERROR."""
+    def __str__(self) -> str:
+        return "HandlerFailedError()"
+
+class BadHandlerError(RemoteError):
+    """Indicates the requested handler does not exist."""
+    def __str__(self) -> str:
+        return "BadHandlerError()"
+
+class UnknownError(RemoteError):
+    """Indicates the requested handler failed in some unknown way."""
+    def __str__(self) -> str:
+        return "UnknownError()"
+
+class NeedsMoreRemoteFeaturesError(RemoteError):
+    """Indicates that the remote does not have the requested feature."""
+    def __init__(self, command: str) -> None:
+        RemoteError.__init__(self,
+            f"The board firmware does not support the '{command}' command "
+            + "and must be recompiled with memory access features "
+            + "(e.g. use 'cmake -DWIFI_SETTINGS_REMOTE=2')")
+
+class NoSecretError(RemoteError):
+    """This error is generated when the remote does not have any update_secret configured."""
+    pass
+
+class AbstractCommunication:
+    def __init__(self, update_secret: bytes,
+            reader: StreamReader, writer: StreamWriter) -> None:
+        self.reader = reader
+        self.writer = writer
+        self.update_secret = update_secret
+        self.enc_receive: typing.Optional[pyaes.aes.AESModeOfOperationCBC] = None
+        self.enc_transmit: typing.Optional[pyaes.aes.AESModeOfOperationCBC] = None
+
+    def gen_auth(self, session_data: bytes) -> bytes:
+        """Generate authentication code from secret and session data."""
+        return hmac.HMAC(key=self.update_secret, msg=session_data,
+                    digestmod=hashlib.sha256).digest()
+
+    def get_data_hash(self, data: bytes, header: bytes) -> bytes:
+        """Compute hash for a message."""
+        integrity = hashlib.sha256()
+        integrity.update(header)
+        integrity.update(data)
+        return integrity.digest()[:DATA_HASH_SIZE]
+
+    @abstractmethod
+    async def greeting(self) -> None:
+        """First message, server to client. Say hello."""
+        pass
+
+    @abstractmethod
+    async def request(self) -> bytes:
+        """Second message, client to server. Client sends the client challenge."""
+        pass
+
+    @abstractmethod
+    async def challenge(self) -> bytes:
+        """Third message, server to client. Server sends the server challenge."""
+        pass
+
+    @abstractmethod
+    async def authentication(self, client_authentication: bytes) -> None:
+        """Fourth message, client to server. Client sends the client authentication."""
+        pass
+
+    @abstractmethod
+    async def response(self, server_authentication: bytes) -> None:
+        """Fifth message, server to client. Server sends the server authentication."""
+        pass
+
+    @abstractmethod
+    async def acknowledge(self) -> None:
+        """Sixth message, client to server. Client indicates authentication is complete."""
+        pass
+
+    async def setup(self) -> None:
+        """Setup process.
+
+        This will either raise an exception or complete successfully.
+        If completed successfully, self.enc_receive and self.enc_transmit will be
+        ready for use, and self.receive() and self.transmit() can be used.
+        """
+        try:
+            # Server says hello
+            await self.greeting()
+
+            # Client and server challenge each other
+            client_challenge = await self.request()
+            server_challenge = await self.challenge()
+
+            # Client and server must exchange authentication codes (based
+            # on both challenges and the shared secret). AuthenticationError is
+            # raised if there is any error here.
+            client_authentication = self.gen_auth(client_challenge +
+                        server_challenge + b"CA")[:AUTHENTICATION_SIZE]
+            server_authentication = self.gen_auth(client_challenge +
+                        server_challenge + b"SA")[:AUTHENTICATION_SIZE]
+            await self.authentication(client_authentication)
+            await self.response(server_authentication)
+
+            # Client acknowledges that the authentication was ok
+            await self.acknowledge()
+
+        except AuthenticationError:
+            # Authentication error detected during setup
+            await self.write_block(struct.pack("<B", ID_AUTH_ERROR) + PAD_BLOCK_1)
+            raise
+
+        except BadVersionError:
+            # version error detected during setup
+            await self.write_block(struct.pack("<B", ID_VERSION_ERROR) + PAD_BLOCK_1)
+            raise
+
+        except BadMessageError as e:
+            # Report errors from the other side
+            if e.received_msg_type == ID_AUTH_ERROR:
+                # Authentication error reported from the other side
+                raise AuthenticationError() from None
+            elif e.received_msg_type == ID_VERSION_ERROR:
+                # Version error reported from the other side
+                raise BadVersionError(0) from None
+            else:
+                # Bad message detected on this side
+                await self.write_block(struct.pack("<B", ID_BAD_MSG_ERROR) + PAD_BLOCK_1)
+                raise
+
+        except asyncio.IncompleteReadError:
+            raise
+
+        # Setup is complete - the rest of the packets will be encrypted
+        # with the agreed session keys, which will be generated now based
+        # on the challenges which were sent, along with the shared secret
+        self.setup_aes(client_challenge, server_challenge)
+
+    async def write_block(self, data: bytes) -> None:
+        """Write a whole number of blocks."""
+        assert (len(data) % AES_BLOCK_SIZE) == 0
+        self.writer.write(data)
+        await self.writer.drain()
+
+    async def read_block(self) -> bytes:
+        """Read one block."""
+        return await self.reader.readexactly(AES_BLOCK_SIZE)
+
+    @abstractmethod
+    def setup_aes(self, client_challenge: bytes, server_challenge: bytes) -> None:
+        """Generate AES keys."""
+        pass
+
+    def get_c2s_key(self, client_challenge: bytes, server_challenge: bytes) -> bytes:
+        """Generate AES client to server key."""
+        return self.gen_auth(client_challenge + server_challenge + b"CK")
+
+    def get_s2c_key(self, client_challenge: bytes, server_challenge: bytes) -> bytes:
+        """Generate AES server to client key."""
+        return self.gen_auth(client_challenge + server_challenge + b"SK")
+
+    @abstractmethod
+    def validate(self, msg_type: int, data_size: int, parameter: int) -> None:
+        """Raise an exception if the request is invalid."""
+        pass
+
+    async def receive(self) -> typing.Tuple[int, bytes, int]:
+        """Receive an encrypted message from the other side.
+
+        This will either raise an exception or complete successfully.
+        The return value is the message received:
+        (msg_type, result_data, result_value)
+
+        This is after integrity checking and validation.
+        The message received will be validated by calling self.validate()
+        before receiving data.
+
+        Exceptions include:
+            asyncio.IncompleteReadError  - disconnected
+            CorruptedMessageError
+            anything from self.validate()
+
+        """
+
+        assert self.enc_receive is not None
+
+        # Read and decrypt an encrypted header block
+        clear_block = self.enc_receive.decrypt(await self.read_block())
+
+        # Header block contains the message type and its result value
+        header = clear_block[:HEADER_SIZE]
+        (data_size, result_value, msg_type) = struct.unpack("<IiB", header)
+        data_hash = clear_block[HEADER_SIZE:]
+
+        # Validate parameters
+        self.validate(msg_type, data_size, result_value)
+
+        # Process input blocks for the handler
+        blocks: typing.List[bytes] = []
+        num_blocks = (data_size + AES_BLOCK_SIZE - 1) // AES_BLOCK_SIZE
+        while len(blocks) < num_blocks:
+            enc_block = await self.read_block()
+            blocks.append(self.enc_receive.decrypt(enc_block))
+
+        # Reassemble and check integrity
+        result_data = b"".join(blocks)[:data_size]
+        if data_hash != self.get_data_hash(result_data, header):
+            raise CorruptedMessageError("Reply hash incorrect")
+
+        return (msg_type, result_data, result_value)
+
+    async def transmit(self, msg_type: int, request_data: bytes, parameter: int) -> None:
+        """Transmit an encrypted message to the other side."""
+
+        assert self.enc_transmit is not None
+
+        # Send header
+        header = struct.pack("<IiB", len(request_data), parameter, msg_type)
+        data_hash = self.get_data_hash(request_data, header)
+        clear_block = header + data_hash
+        assert len(clear_block) == AES_BLOCK_SIZE
+        blocks = [self.enc_transmit.encrypt(clear_block)]
+
+        # Pad data to block boundary
+        request_data += get_pad_bytes(len(request_data), AES_BLOCK_SIZE)
+
+        # Add data
+        num_blocks = len(request_data) // AES_BLOCK_SIZE
+        for i in range(num_blocks):
+            clear_block = request_data[i * AES_BLOCK_SIZE : (i + 1) * AES_BLOCK_SIZE]
+            blocks.append(self.enc_transmit.encrypt(clear_block))
+
+        # Send
+        await self.write_block(b"".join(blocks))
+
+class Client(AbstractCommunication):
+    """Communications specialisation for client side."""
+
+    async def greeting(self) -> None:
+        """First message, server to client. Say hello."""
+        block = await self.read_block()
+        (msg_type, version, num_blocks) = struct.unpack("<BBB", block[:3])
+        if msg_type != ID_GREETING:
+            raise BadMessageError(msg_type, ID_GREETING)
+        if version != PROTOCOL_VERSION:
+            raise BadVersionError(version)
+        if num_blocks == 0:
+            raise BadMessageError(msg_type, ID_GREETING)
+        for i in range(num_blocks - 1):
+            await self.read_block()
+
+    async def request(self) -> bytes:
+        """Second message, client to server. Client sends the client challenge."""
+        client_challenge = os.urandom(CHALLENGE_SIZE)
+        await self.write_block(struct.pack("<B", ID_REQUEST) + client_challenge)
+        return client_challenge
+
+    async def challenge(self) -> bytes:
+        """Third message, server to client. Server sends the server challenge."""
+        block = await self.read_block()
+        msg_type = block[0]
+        if msg_type != ID_CHALLENGE:
+            if msg_type == ID_NO_SECRET_ERROR:
+                raise NoSecretError("Connection ok, but update_secret is not set on the server")
+            raise BadMessageError(msg_type, ID_CHALLENGE)
+        server_challenge = block[1:]
+        return server_challenge
+
+    async def authentication(self, client_authentication: bytes) -> None:
+        """Fourth message, client to server. Client sends the client authentication."""
+        await self.write_block(struct.pack("<B", ID_AUTHENTICATION) + client_authentication)
+
+    async def response(self, server_authentication: bytes) -> None:
+        """Fifth message, server to client. Server sends the server authentication."""
+        block = await self.read_block()
+        msg_type = block[0]
+        if msg_type != ID_RESPONSE:
+            raise BadMessageError(msg_type, ID_RESPONSE)
+        if server_authentication != block[1:]:
+            raise AuthenticationError()
+
+    async def acknowledge(self) -> None:
+        """Sixth message, client to server. Client indicates authentication is complete."""
+        await self.write_block(struct.pack("<B", ID_ACKNOWLEDGE) + PAD_BLOCK_1)
+
+    def setup_aes(self, client_challenge: bytes, server_challenge: bytes) -> None:
+        """Generate AES keys for client."""
+        self.enc_receive = pyaes.aes.AESModeOfOperationCBC(key=self.get_s2c_key(
+                client_challenge, server_challenge), iv=AES_IV)
+        self.enc_transmit = pyaes.aes.AESModeOfOperationCBC(key=self.get_c2s_key(
+                client_challenge, server_challenge), iv=AES_IV)
+
+    def validate(self, msg_type: int, data_size: int, parameter: int) -> None:
+        """Raise an exception if the request is invalid."""
+        # Validation is on the other side
+        pass
+
+    async def run(self, handler_id: int, request_data: bytes = b"",
+                  parameter: int = 0) -> typing.Tuple[bytes, int]:
+        """Run client."""
+        assert handler_id >= ID_FIRST_HANDLER
+
+        try:
+            if self.enc_receive is None:
+                await self.setup()
+            await self.transmit(handler_id, request_data, parameter)
+            (msg_type, result_data, result_value) = await self.receive()
+
+        except asyncio.IncompleteReadError:
+            raise ConnectionError() from None
+        except ConnectionResetError:
+            raise ConnectionError() from None
+
+        if msg_type == ID_OK:
+            return (result_data, result_value)
+        elif msg_type == ID_CORRUPT_ERROR:
+            raise CorruptedMessageError("ID_CORRUPT_ERROR received")
+        elif msg_type == ID_BAD_HANDLER_ERROR:
+            raise BadHandlerError()
+        elif msg_type == ID_BAD_PARAM_ERROR:
+            raise BadParameterError()
+        else:
+            raise UnknownError()
+
+class KeyValueStore:
+    """Represents a key=value store such as the wifi-settings file or data from ID_PICO_INFO_HANDLER."""
+
+    END_OF_LINE_BYTES = b"\r\n\x00\xff\x1b"
+
+    def __init__(self, contents: bytes = b"") -> None:
+        """Create object representing key=value store."""
+        self.contents = contents
+
+    def find_index(self, key: str) -> typing.Optional[typing.Tuple[int, int, int]]:
+        """Find the space occupied by key=value"""
+        key_bytes = ("\n" + key + "=").encode("utf-8")
+        if self.contents.startswith(key_bytes[1:]):
+            # key=value at the beginning of the file
+            key_index = 0
+        else:
+            # key=value elsewhere in the file?
+            key_index = self.contents.find(key_bytes)
+            if key_index < 0:
+                # not present
+                return None
+            key_index += 1 # skip '\n'
+
+        # find start and end of value
+        value_index = key_index + len(key_bytes) - 1
+        end_index = value_index
+        while ((end_index < len(self.contents))
+        and (self.contents[end_index] not in self.END_OF_LINE_BYTES)):
+            end_index += 1
+        
+        return (key_index, value_index, end_index)
+
+    def get(self, key: str, errors: str = "ignore") -> typing.Optional[str]:
+        """Get a value for a key or return None"""
+        found = self.find_index(key)
+        if not found:
+            return None
+    
+        (_, value_index, end_index) = found
+        return self.contents[value_index : end_index].decode("utf-8", errors=errors)
+
+    def crop(self) -> None:
+        """Remove end characters"""
+        self.contents = self.contents.rstrip(self.END_OF_LINE_BYTES)
+
+    def discard(self, key: str) -> None:
+        """Discard all copies of a key"""
+        found = self.find_index(key)
+        while found:
+            # What to remove?
+            (key_index, _, end_index) = found
+            # Also remove line endings and end-of-file characters
+            while ((end_index < len(self.contents))
+            and (self.contents[end_index] in self.END_OF_LINE_BYTES)):
+                end_index += 1
+            self.contents = self.contents[key_index:] + self.contents[end_index:]
+            # Search again
+            found = self.find_index(key)
+
+    def set(self, key: str, value: str) -> None:
+        """Set a new value for a key (discarding old values first if necessary)"""
+        self.discard(key)
+        self.crop()
+        self.contents = (key + "=" + value + "\n").encode("utf-8") + self.contents
+
+    def get_int(self, key: str, default_value: int = 0) -> int:
+        value = self.get(key)
+        if value is None:
+            return default_value
+        try:
+            return int(value, 0)
+        except ValueError:
+            return default_value
+
+    def get_str(self, key: str, default_value: str = "") -> str:
+        value = self.get(key)
+        if value is None:
+            return default_value
+        else:
+            return value
+
+    def get_range(self, key: str) -> FlashRange:
+        value = self.get(key)
+        if value is None:
+            return (0, 0)
+        (start, _, end) = value.partition(":")
+        try:
+            return (int(start, 0), int(end, 0))
+        except ValueError:
+            return (0, 0)
+
+class PicoInfo(KeyValueStore):
+    """This represents information from ID_PICO_INFO_HANDLER."""
+
+    async def load(self, client: Client) -> None:
+        """Load contents."""
+        (result_data, result_value) = await client.run(ID_PICO_INFO_HANDLER)
+        self.contents = result_data
+
+    @property
+    def sysinfo_chip_id(self) -> int:
+        return self.get_int("sysinfo_chip_id")
+
+    @property
+    def flash_sector_size(self) -> int:
+        return self.get_int("flash_sector_size")
+
+    @property
+    def logical_offset(self) -> int:
+        return self.get_int("logical_offset")
+
+    @property
+    def flash_size(self) -> int:
+        (start, end) = self.flash_range
+        return end - start
+
+    @property
+    def flash_range(self) -> FlashRange:
+        return self.get_range("flash_all")
+
+    @property
+    def flash_reusable_range(self) -> FlashRange:
+        return self.get_range("flash_reusable")
+
+    @property
+    def flash_wifi_settings_file_range(self) -> FlashRange:
+        return self.get_range("flash_wifi_settings_file")
+
+    @property
+    def flash_program_range(self) -> FlashRange:
+        return self.get_range("flash_program")
+
+    @property
+    def max_data_size(self) -> int:
+        return self.get_int("max_data_size")
+
+    @property
+    def board_id(self) -> str:
+        return self.get_str("board_id")
+
+    @property
+    def name(self) -> str:
+        return self.get_str("name")
+
+    @property
+    def revision(self) -> int:
+        return self.sysinfo_chip_id >> 28
+
+    @property
+    def part_number(self) -> int:
+        return (self.sysinfo_chip_id >> 12) & 0xffff
+
+    @property
+    def manufacturer_id(self) -> int:
+        return self.sysinfo_chip_id & 0xffe
+
+    @property
+    def type_name(self) -> str:
+        if self.manufacturer_id == 0x926:
+            return {
+                2: "RP2040",
+                4: "RP2350",
+            }.get(self.part_number, "<not known>")
+        else:
+            return "<not RPi>"
+
+async def get_pico_connection(args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
+    """Connect to a Pico, determining the address and port from
+    command-line options or the environment.
+
+    Implements:
+     - Use `--address <x.x.x.x>` to provide an IP address or hostname.
+     - Use `--id <x>` to provide all or part of the board ID (see below).
+     - Use the environment variable `PICO_ADDRESS` to provide an IP address or hostname.
+     - Use the environment variable `PICO_ID` to provide all or part of the board ID.
+    """
+
+    if args.address:
+        # Command-line --address option provided
+        return await get_pico_connection_for_address(args.address, args)
+
+    if args.id:
+        # Command-line --id option provided
+        return await get_pico_connection_for_board_id(args.id, args)
+
+    # Try environment variables
+    address = os.getenv("PICO_ADDRESS", "")
+    if address:
+        return await get_pico_connection_for_address(address, args)
+
+    board_id = os.getenv("PICO_ID", "")
+    if board_id:
+        return await get_pico_connection_for_board_id(board_id, args)
+
+    # No address provided, no ID provided? Hopefully there is only one board on the network!
+    return await get_pico_connection_for_board_id(None, args)
+
+async def get_pico_connection_for_address(
+        address: str,
+        args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
+    """Connect to a Pico at a specified address with a port from the command line."""
+    return await asyncio.open_connection(address, args.port)
+
+async def get_pico_connection_for_board_id(
+        board_id: typing.Optional[str],
+        args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
+    """Connect to a Pico at a specified address with a port from the command line."""
+    address = await get_pico_address_for_board_id(board_id, args)
+    return await get_pico_connection_for_address(address, args)
+
+async def get_pico_address_for_board_id(
+        board_id: typing.Optional[str],
+        args: argparse.Namespace) -> str:
+    """Get a Pico IP address by searching for a board.
+
+    See get_list_of_boards_for_board_id for information about the search.
+    This function restricts the search to finding only one board."""
+
+    matches = await get_list_of_boards_for_board_id(board_id, args)
+    if len(matches) == 0:
+        raise RemoteError(f"No Pico W devices responded to the board id search '{board_id}'")
+    if len(matches) != 1:
+        raise RemoteError(f"Multiple ({len(matches)}) Pico W devices responded to board id search '{board_id}', " +
+                    "please use a more precise search criteria with --id, use the --address option, " +
+                    "or 'list' to list the ID of all boards.")
+    return list(matches.keys())[0]
+
+async def get_list_of_boards_for_board_id(board_id: typing.Optional[str],
+        args: argparse.Namespace) -> typing.Dict[str, str]:
+    """Get a list of boards that match a given id.
+
+    This is done by broadcasting a UDP packet containing a request,
+    then waiting for --search-timeout seconds while collecting replies.
+
+    Broadcast is used because multicast does not work reliably with typical home WiFi hotspots.
+
+    The OS requires broadcast packets to be sent from a specific network interface.
+    The IP address of a suitable interface can be specified with --search-interface;
+    otherwise, the interface associated with the default route is used.
+    """
+
+    # Check board ID is valid. You can specify all or part of a board ID,
+    # so the board ID can be 0 to 16 hex digits.
+    if not board_id:
+        board_id = ""
+    board_id = board_id.upper()
+
+    if ((len(board_id) > (BOARD_ID_SIZE * 2))
+    or (re.match(r"^[0-9A-F]*$", board_id) is None)):
+        raise LocalError(f"The board --id parameter must be a hex value with up to {BOARD_ID_SIZE * 2} digits")
+
+    # Find a network interface to be used for the search.
+    search_interface = args.search_interface
+    if not search_interface:
+        # Determine which network interface is used for the default route, by considering what
+        # happens if we wish to send a packet to an address on the Internet (e.g. "1.0.0.0").
+        # No packets are actually sent.
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        try:
+            s.connect(("1.0.0.0", 9))
+            (search_interface, _) = s.getsockname()
+        except Exception:
+            raise LocalError("Unable to determine which network interface can be used for "
+                        + "broadcast, please use --search-interface") from None
+        s.close()
+
+    # Set up the search
+    matches: typing.Dict[str, str] = {}
+    expected_size = (len(RESPONDER_REPLY_MAGIC) + (BOARD_ID_SIZE * 2))
+    request = RESPONDER_REQUEST_MAGIC + board_id.encode("ascii")
+    broadcast = "255.255.255.255"
+
+    class ReceivedBoardIDProtocol(asyncio.DatagramProtocol):
+        def datagram_received(self, reply: bytes, addr: typing.Any) -> None:
+            # reply might contain a board ID (but could be anything)
+            if len(reply) < expected_size:
+                return
+            if not reply.startswith(RESPONDER_REPLY_MAGIC):
+                return
+
+            received_board_id = reply[len(RESPONDER_REPLY_MAGIC):expected_size].decode("ascii", errors="ignore")
+            if len(received_board_id) != (BOARD_ID_SIZE * 2):
+                return
+
+            if str(board_id) not in received_board_id:
+                return
+
+            matches[addr[0]] = received_board_id
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except Exception:
+        # SO_REUSEPORT isn't supported on every OS
+        pass
+    try:
+        s.bind((search_interface, 0))
+    except Exception:
+        raise LocalError(f"Unable to bind to '{search_interface}' for broadcast") from None
+
+    transport, protocol = await asyncio.get_event_loop().create_datagram_endpoint(
+        protocol_factory=ReceivedBoardIDProtocol, sock=s)
+
+    # Transmit the request
+    transport.sendto(request, addr=(broadcast, args.port))
+    # Await replies
+    await asyncio.sleep(args.search_timeout)
+    transport.close()
+    # Return a mapping of { address -> board_id }
+    return matches
+
+class FileType(enum.Enum):
+    NOT_FOUND = enum.auto()
+    UF2 = enum.auto()
+    ELF = enum.auto()
+    BINARY = enum.auto()
+    WIFI_SETTINGS = enum.auto()
+
+def get_file_type(filename: Path) -> FileType:
+    """Examine a file provided by the user and classify it."""
+
+    if not filename.exists():
+        return FileType.NOT_FOUND
+
+    if not filename.is_file():
+        raise LocalError(f"Not a file: '{filename}'")
+
+    with open(filename, "rb") as fd:
+        sample = fd.read(MAX_WIFI_SETTINGS_FILE_SIZE + 1)
+        magic = sample[:4]
+    
+    if magic == b"UF2\n":
+        return FileType.UF2
+    if magic == b"\x7fELF":
+        return FileType.ELF
+    if len(sample) > MAX_WIFI_SETTINGS_FILE_SIZE:
+        return FileType.BINARY
+
+    # Check if file is valid UTF-8 (aside from "unused Flash" file characters, 0xff)
+    sample = sample.rstrip(b"\xff") + b"\x1b\x00\x1b" # <<TEST
+    utf8_check = sample.decode("utf-8", errors="ignore").encode("utf-8")
+    if len(utf8_check) == len(sample):
+        # Valid UTF-8 aside from unused Flash characters
+        return FileType.WIFI_SETTINGS
+
+    return FileType.BINARY
+
+def get_update_secret(args: argparse.Namespace) -> bytes:
+    """Get the update secret
+
+    Implements:
+     - Use the command-line option `--secret` (if provided)
+     - Use the environment variable `PICO_UPDATE_SECRET` (if set)
+     - Use the contents of file $APPDATA/pico-wifi-settings-secret (if it exists)
+     - Use the contents of file $XDG_CONFIG_HOME/pico-wifi-settings-secret (if it exists)
+     - Use the contents of file ~/.config/pico-wifi-settings-secret (if it exists)
+     - Use the WiFi settings file that you provide (if any)
+    """
+    secret = ""
+    if args.secret:
+        # Command-line option provided
+        secret = args.secret
+
+    # Try environment variable
+    if not secret:
+        secret = os.getenv("PICO_UPDATE_SECRET", "")
+
+    # Try to use the contents of a secret file
+    if not secret:
+        config_dir = (os.getenv("APPDATA", "") or os.getenv("XDG_CONFIG_HOME", "")
+                            or str(Path().home() / ".config"))
+        if config_dir:
+            config_file = Path(config_dir) / "pico-wifi-settings-secret"
+            if config_file.is_file():
+                secret = config_file.read_text("utf-8").rstrip()
+
+    # If neither was provided, how about the wifi-settings file?
+    if ((not secret) and hasattr(args, "filename")
+    and (get_file_type(args.filename) == FileType.WIFI_SETTINGS)):
+        # Load secret from file
+        store = KeyValueStore(args.filename.read_bytes())
+        secret = store.get_str("update_secret")
+
+    if not secret:
+        raise NoSecretError("No update_secret is available for the client (use --secret)")
+
+    return get_update_secret_from_str(secret)
+
+def get_update_secret_from_str(secret: str) -> bytes:
+    """Turn the secret provided by the user into a 32-byte hash."""
+    secret_hash = b"\x00" * 32
+    secret_bytes = secret.encode("utf-8")
+    for i in range(4096):
+        secret_hash = hashlib.sha256(secret_hash + secret_bytes).digest()
+
+    return secret_hash
+
+def subcommand_info(args: argparse.Namespace) -> None:
+    """Print information gathered from a device that is running pico-wifi-settings.""" 
+    update_secret = get_update_secret(args)
+    pico_info = PicoInfo()
+
+    async def run() -> None:
+        try:
+            reader, writer = await get_pico_connection(args)
+            await pico_info.load(Client(update_secret, reader, writer))
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    asyncio.run(run())
+
+    if args.raw:
+        print("Raw data")
+        print(pico_info.contents.decode("utf-8", errors="ignore"))
+
+    # Additional reporting for a partition (if present)
+    partition = ""
+    if pico_info.flash_program_range[0] != pico_info.flash_range[0]:
+        partition = f"""
+ partition end:     0x{pico_info.flash_reusable_range[1]:08x}"""
+
+    # Reporting
+    print(f"""\
+Wifi Settings File
+ hostname:          {pico_info.name}
+ ip address:        {pico_info.get_str("ip")}
+ 
+Program Information
+ name:              {pico_info.get_str("program")}
+ features:          {pico_info.get_str("feature")}
+ binary start:      0x{pico_info.flash_program_range[0]:08x}
+ binary end:        0x{pico_info.flash_program_range[1]:08x}{partition}
+ wifi-settings at:  0x{pico_info.flash_wifi_settings_file_range[0]:08x}
+
+Build Information
+ sdk version:       {pico_info.get_str("sdk_version")}
+ wifi-settings ver: {pico_info.get_str("wifi_settings_version")}
+ build date:        {pico_info.get_str("build_date")}
+ build attributes:  {pico_info.get_str("build_attribute")}
+
+Device Information
+ type:              {pico_info.type_name}
+ revision:          {pico_info.revision}
+ flash size:        0x{pico_info.flash_size:08x}
+ flash sector size: 0x{pico_info.flash_sector_size:08x}
+ board id:          {pico_info.board_id}""")
+
+class UpdateRebootMode(enum.Enum):
+    REBOOT = enum.auto()
+    UPDATE_REBOOT = enum.auto()
+    UPDATE = enum.auto()
+    REBOOT_BOOTLOADER = enum.auto()
+
+def subcommand_update_reboot(args: argparse.Namespace) -> None:
+    mode = typing.cast(UpdateRebootMode, args.mode)
+
+    request_data = b""
+    if mode in (UpdateRebootMode.UPDATE, UpdateRebootMode.UPDATE_REBOOT):
+        file_type = get_file_type(args.filename)
+        if file_type == FileType.NOT_FOUND:
+            raise LocalError(f"File '{args.filename}' does not exist")
+        elif file_type != FileType.WIFI_SETTINGS:
+            raise LocalError(
+                f"File '{args.filename}' does not appear to be a wifi-settings file; " +
+                "this command requires a wifi-settings file in UTF-8 format, max size " +
+                f"{MAX_WIFI_SETTINGS_FILE_SIZE} bytes.")
+        request_data = args.filename.read_bytes()
+
+    msg_type = ID_UPDATE_REBOOT_HANDLER
+    if mode == UpdateRebootMode.UPDATE:
+        msg_type = ID_UPDATE_HANDLER
+
+    parameter = 0
+    if mode == UpdateRebootMode.REBOOT_BOOTLOADER:
+        parameter = 1
+
+    update_secret = get_update_secret(args)
+
+    async def run() -> None:
+        try:
+            reader, writer = await get_pico_connection(args)
+            (result_data, result_value) = await Client(
+                update_secret, reader, writer).run(
+                    handler_id=msg_type,
+                    request_data=request_data,
+                    parameter=parameter)
+
+            if (result_value == PICO_ERROR_NOT_PERMITTED) and (msg_type == ID_UPDATE_HANDLER):
+                raise RemoteError(
+                    "'Not Permitted' error received: this error comes from "
+                    "flash_safe_execute() and indicates that your firmware lacks support "
+                    "for safe multicore Flashing. You can use 'update_reboot' instead "
+                    "of 'update' as a workaround.")
+            if mode == UpdateRebootMode.UPDATE:
+                if result_value != len(request_data):
+                    raise PicoError(result_value)
+
+            if result_value < 0:
+                raise PicoError(result_value)
+
+            if mode == UpdateRebootMode.REBOOT:
+                print("Reboot requested")
+            elif mode == UpdateRebootMode.UPDATE_REBOOT:
+                print("Update and reboot requested")
+            elif mode == UpdateRebootMode.UPDATE:
+                print("Updated ok")
+            elif mode == UpdateRebootMode.REBOOT_BOOTLOADER:
+                print("Reboot to bootloader requested")
+
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    asyncio.run(run())
+
+def subcommand_save(args: argparse.Namespace) -> None:
+    update_secret = get_update_secret(args)
+
+    # Sanity check for the file type
+    file_type = get_file_type(args.filename)
+    if args.filename.name.lower().endswith(".uf2") or file_type == FileType.UF2:
+        raise LocalError(f"File '{args.filename}' specifies a UF2 firmware file; " +
+                          "this command requires a memory image file (.bin)")
+    elif args.filename.name.lower().endswith(".elf") or file_type == FileType.ELF:
+        raise LocalError(f"File '{args.filename}' specifies an ELF file; " +
+                          "this command requires a memory image file (.bin)")
+    elif file_type == FileType.WIFI_SETTINGS:
+        raise LocalError(f"File '{args.filename}' is a text file and would be overwritten")
+
+    async def run() -> None:
+        try:
+            reader, writer = await get_pico_connection(args)
+            client = Client(update_secret, reader, writer)
+
+            # Get the Pico info first, in order to know enough about the program and Flash memory
+            pico_info = PicoInfo()
+            await pico_info.load(client)
+
+            # Determine the range to be downloaded
+            if args.range:
+                # User provides an exact range
+                range_start = args.range[0]
+                range_end = args.range[1]
+            elif args.all:
+                # All Flash to be downloaded
+                (range_start, range_end) = pico_info.flash_range
+                range_start += pico_info.logical_offset
+                range_end += pico_info.logical_offset
+            else:
+                # Current program to be downloaded
+                (range_start, range_end) = pico_info.flash_program_range
+                range_start += pico_info.logical_offset
+                range_end += pico_info.logical_offset
+
+            if range_start >= range_end:
+                raise LocalError(f"Range is not valid: 0x{range_start:08x} .. 0x{range_end:08x}")
+
+            # Request data
+            with open(args.filename, "wb") as fd:
+                while range_start < range_end:
+                    size = min(pico_info.max_data_size, range_end - range_start)
+                    request_data = READ_PARAMETER.pack(range_start, size)
+                    try:
+                        (result_data, result_value) = await client.run(ID_READ_HANDLER, request_data)
+                    except BadHandlerError:
+                        raise NeedsMoreRemoteFeaturesError("save") from None
+
+                    if result_value < 0:
+                        raise PicoError(result_value)
+                    fd.write(result_data)
+                    range_start += size
+
+            print("Save ok")
+
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    asyncio.run(run())
+
+async def do_load(client: Client, filename: Path,
+                  load_offset: typing.Optional[int],
+                  ota_mode: bool) -> typing.Tuple[int, int, bytes]:
+
+    # Sanity check for the file type
+    file_type = get_file_type(filename)
+    if file_type == FileType.WIFI_SETTINGS:
+        raise LocalError(f"File '{filename}' appears to be a text file; " +
+                          "this command requires a memory image file (.bin)")
+    elif file_type == FileType.UF2:
+        raise LocalError(f"File '{filename}' appears to be a UF2 firmware file; " +
+                          "this command requires a memory image file (.bin)")
+    elif file_type == FileType.ELF:
+        raise LocalError(f"File '{filename}' appears to be an ELF file; " +
+                          "this command requires a memory image file (.bin)")
+    elif file_type == FileType.NOT_FOUND:
+        raise LocalError(f"File '{filename}' does not exist")
+
+    # Get the Pico info first, in order to know enough about the existing program and Flash memory
+    pico_info = PicoInfo()
+    await pico_info.load(client)
+
+    # Check various Pico Info properties which are expected to hold
+    block_size = pico_info.flash_sector_size
+    mask = block_size - 1
+    (min_free_address, max_free_address) = pico_info.flash_reusable_range
+
+    if not ((block_size <= pico_info.max_data_size)
+    and ((block_size & mask) == 0)      # block size is a power of 2
+    and (block_size >= 1)
+    and (max_free_address > min_free_address)
+    and ((min_free_address & mask) == 0) # multiple of block_size
+    and ((max_free_address & mask) == 0)):
+        raise RemoteError("Pico Info appears to contain inconsistent data")
+
+    # Check data file size and offset
+    # The user is not allowed to overwrite the current program, because although the
+    # Flash writing procedure is in RAM, the TCP stack, WiFi driver and wifi-settings are not,
+    # and as only max_data_size bytes can be uploaded at once, the program would be only
+    # partially overwritten, which would be very bad.
+    data_size = filename.stat().st_size
+    min_offset = min_free_address
+
+    if ota_mode:
+        # the new program's load address must allow enough room for it to be copied
+        # over the old program, so compute the end address of the new program once
+        # it is installed
+        program_offset = pico_info.flash_program_range[0]
+        min_offset = program_offset + (data_size | mask) + 1
+
+    # If an offset was not provided, we use the end of the program
+    if load_offset is None:
+        load_offset = max(min_free_address, min_offset)
+    load_end = load_offset + data_size
+    if load_offset < min_free_address:
+        raise RemoteError("The offset is incorrect. It must be at least "
+            f"0x{min_free_address:08x} (end of the program).")
+    if load_offset < min_offset:
+        raise RemoteError("The offset is incorrect. It must be at least "
+            f"0x{min_offset:08x} (end of the new program).")
+    if load_end > max_free_address:
+        raise RemoteError("The file is too large; there is not enough reusable space. " +
+            f"The reusable space is {max_free_address - min_free_address} bytes, beginning at offset " +
+            f"0x{min_free_address:08x} (end of the program). The file size is {data_size} bytes.")
+    if load_offset & mask:
+        raise RemoteError("The offset is incorrect. It must be aligned with the Flash "
+            f"sector size 0x{block_size:08x}.")
+
+    # For the benefit of an OTA update, where would we copy from/to?
+    copy_from_offset = load_offset
+    (copy_to_offset, _) = pico_info.flash_program_range
+
+    # Load file and pad
+    data = filename.read_bytes()[:data_size]
+    data += get_pad_bytes(len(data), block_size, b"\xff")
+    data_size = len(data)
+    print(f"Load {data_size} bytes:", flush=True)
+
+    # Upload
+    write_offset = 0
+    while write_offset < data_size:
+        try:
+            (result_data, result_value) = await client.run(ID_FLASH_WRITE_HANDLER,
+                request_data=data[write_offset : write_offset + block_size],
+                parameter=write_offset + load_offset)
+        except BadHandlerError:
+            raise NeedsMoreRemoteFeaturesError("ota" if ota_mode else "load") from None
+        if result_value == PICO_ERROR_NOT_PERMITTED:
+            raise RemoteError(
+                "'Not Permitted' error received: this error comes from "
+                "flash_safe_execute() and indicates that your firmware lacks support "
+                "for safe multicore Flashing, which is needed for 'load' "
+                "and 'ota' commands.")
+        if result_value != 0:
+            # Other error codes should not be seen, because the required validation
+            # has already been done by the Python code in this function.
+            raise PicoError(result_value)
+        write_offset += block_size
+        percent = (write_offset * 100.0) / data_size
+        print(f"\r {percent:1.0f}%", end="", flush=True)
+
+    print(f"\rLoad ok, offset 0x{load_offset:08x}", flush=True)
+
+    # Returned for the benefit of an OTA update
+    return (copy_from_offset, copy_to_offset, data)
+
+
+def subcommand_load(args: argparse.Namespace) -> None:
+    update_secret = get_update_secret(args)
+
+    async def run() -> None:
+        try:
+            reader, writer = await get_pico_connection(args)
+            client = Client(update_secret, reader, writer)
+
+            await do_load(client, args.filename, args.offset, False)
+
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    asyncio.run(run())
+
+def subcommand_ota(args: argparse.Namespace) -> None:
+    update_secret = get_update_secret(args)
+
+    async def run() -> None:
+        try:
+            reader, writer = await get_pico_connection(args)
+            client = Client(update_secret, reader, writer)
+
+            # Load the data into Flash
+            (copy_from_offset, copy_to_offset, data) = await do_load(client, args.filename, None, True)
+
+            # Verify on the Pico, then install
+            ota_firmware_update_parameter_data = OTA_FIRMWARE_UPDATE_PARAMETER.pack(
+                    copy_from_offset, len(data),
+                    copy_to_offset, len(data)) + hashlib.sha256(data).digest()
+            (result_data, result_value) = await client.run(ID_OTA_FIRMWARE_UPDATE_HANDLER,
+                request_data=ota_firmware_update_parameter_data)
+    
+            if result_value != 0:
+                # Verification failed on the Pico
+                raise PicoError(result_value)
+            print("Verify ok - install command was accepted")
+
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    asyncio.run(run())
+
+def subcommand_list(args: argparse.Namespace) -> None:
+    async def run() -> None:
+        matches = await get_list_of_boards_for_board_id(args.id, args)
+
+        for (address, board_id) in sorted(matches.items()):
+            print(f"{address:15s} {board_id}")
+        if len(matches) == 0:
+            print("No Pico W devices found")
+
+    asyncio.run(run())
+
+
+def add_wifi_settings_file_argument(parser_info: argparse.ArgumentParser) -> None:
+    parser_info.add_argument("filename",
+        type=Path,
+        metavar="FILE",
+        help="WiFi settings file")
+
+def add_firmware_file_argument(parser_info: argparse.ArgumentParser) -> None:
+    parser_info.add_argument("filename",
+        type=Path,
+        metavar="FILE.bin",
+        help="Memory image file (always in .bin format)")
+
+def main() -> None:
+    parser = argparse.ArgumentParser("remote_picotool",
+        description="Pico W devices can only be controlled by remote_picotool if they "
+            "are running firmware with wifi-settings and an update_secret is configured. "
+            "Subcommands marked with [*] also require building with -DWIFI_SETTINGS_REMOTE=2. "
+            "See " + URL + " for instructions.")
+    parser.add_argument("--port",
+        type=int,
+        metavar="N",
+        help="Port number",
+        default=PORT_NUMBER)
+    parser.add_argument("--search-timeout",
+        type=float,
+        metavar="SECONDS",
+        help="Timeout for search when the target address is not specified",
+        default=0.5)
+    parser.add_argument("--search-interface",
+        type=str,
+        metavar="A.B.C.D",
+        help="IP address of local interface to be used for search when the target address is not specified",
+        default='')
+    parser.add_argument("--secret",
+        type=str,
+        metavar="PASSPHRASE",
+        help="Shared secret (configured as update_secret in the WiFi settings file)")
+    parser.add_argument("--address",
+        type=str,
+        metavar="A.B.C.D",
+        help="Target address for Pico W (IP or hostname)")
+    parser.add_argument("--id",
+        type=str,
+        metavar="ID",
+        help="Target board ID (may be partial)")
+
+    subparser = parser.add_subparsers(required=True,
+            description="Use remote_picotool <subcommand> --help for more details:")
+
+    parser_info = subparser.add_parser("info",
+        help="Print information about the Pico W and the current configuration")
+    parser_info.set_defaults(func=subcommand_info)
+    parser_info.add_argument("--raw",
+        action="store_true",
+        help="Dump raw data from the board")
+
+    parser_update = subparser.add_parser("update",
+        help="Update the WiFi settings file on the Pico W")
+    add_wifi_settings_file_argument(parser_update)
+    parser_update.set_defaults(func=subcommand_update_reboot)
+    parser_update.set_defaults(mode=UpdateRebootMode.UPDATE)
+
+    parser_update_reboot = subparser.add_parser("update_reboot",
+        help="Update the WiFi settings file on the Pico W and then immediately reboot")
+    add_wifi_settings_file_argument(parser_update_reboot)
+    parser_update_reboot.set_defaults(func=subcommand_update_reboot)
+    parser_update_reboot.set_defaults(mode=UpdateRebootMode.UPDATE_REBOOT)
+
+    parser_reboot = subparser.add_parser("reboot",
+        help="Reboot the Pico W into user firmware")
+    parser_reboot.set_defaults(func=subcommand_update_reboot)
+    parser_reboot.set_defaults(mode=UpdateRebootMode.REBOOT)
+
+    parser_bootloader = subparser.add_parser("reboot_bootloader",
+        help="Reboot the Pico W into the ROM bootloader " +
+            "(as if BOOTSEL were held down during power on) [*]")
+    parser_bootloader.set_defaults(func=subcommand_update_reboot)
+    parser_bootloader.set_defaults(mode=UpdateRebootMode.REBOOT_BOOTLOADER)
+
+    parser_save = subparser.add_parser("save", help="Save memory to a file [*]")
+    parser_save.add_argument("-a", "--all", action="store_true", help="Save all of Flash memory")
+    parser_save.add_argument("-p", "--program", action="store_true", help="Save the installed program only (this is the default)")
+    parser_save.add_argument("-r", "--range", nargs=2,
+            metavar="LOGICAL", type=lambda s: int(s, 0),
+            help="Save a range of memory. These are logical addresses, "
+                "i.e. addresses as seen by the program. Only SRAM and Flash "
+                "addresses can be accessed. For Pico 2 with partitions, "
+                "use the 0x1c...... range to access untranslated Flash "
+                "addresses outside of the current partition (e.g. "
+                "the wifi-settings file) and 0x10...... for translated "
+                "addresses in the current partition.")
+    add_firmware_file_argument(parser_save)
+    parser_save.set_defaults(func=subcommand_save)
+
+    parser_load = subparser.add_parser("load", help="Load Flash memory from a file [*]")
+    parser_load.add_argument("-o", "--offset",
+            metavar="FLASH", type=lambda s: int(s, 0),
+            help="Load offset. This is a physical address in Flash, "
+                "i.e. address 0 is the start of Flash.", required=True)
+    add_firmware_file_argument(parser_load)
+    parser_load.set_defaults(func=subcommand_load)
+
+    parser_ota = subparser.add_parser("ota", help="Perform over-the-air (OTA) firmware update [*]")
+    add_firmware_file_argument(parser_ota)
+    parser_ota.set_defaults(func=subcommand_ota)
+
+    parser_list = subparser.add_parser("list", help="List all Pico W devices matching the --id search criteria")
+    parser_list.set_defaults(func=subcommand_list)
+
+    args = parser.parse_args(sys.argv[1:] or ["--help"])
+    try:
+        args.func(args)
+    except RemoteError as e:
+        print("Remote error:", str(e))
+        sys.exit(1)
+    except LocalError as e:
+        print("Error:", str(e))
+        sys.exit(1)
+    #except KeyboardInterrupt:
+    #    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

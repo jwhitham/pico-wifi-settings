@@ -1,0 +1,10 @@
+.idea
+.vscode
+_deps
+cmake-*
+build*
+.DS_Store
+*.pdf
+__pycache__
+*.bin
+/release

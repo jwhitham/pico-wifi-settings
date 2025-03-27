@@ -1,0 +1,9 @@
+#ifndef PICO_MULTICORE_H
+#define PICO_MULTICORE_H
+
+#ifndef UNIT_TEST
+#error "THIS IS A MOCK HEADER FOR UNIT TESTING ONLY"
+#endif
+
+
+#endif

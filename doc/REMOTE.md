@@ -1,0 +1,256 @@
+# Remote updates
+
+When pico-wifi-settings is built with default options, it is possible to remotely
+update the [WiFi settings file](SETTINGS_FILE.md).
+
+This requires the following:
+
+ - The WiFi settings file must already exist, and must already contain
+   the settings needed to connect to WiFi.
+ - The WiFi settings file must contain an `update_secret`.
+ - wifi\_settings must have been [integrated with your Pico application](INTEGRATION.md).
+ - A PC, server, Raspberry Pi or other computer capable of running the
+   [remote\_picotool](../remote_picotool) program:
+    - You need to install the `pyaes` Python module: 
+      `pip install pyaes` or `apt install python3-pyaes`
+    - Python version >= 3.10 is recommended 
+ - The Pico must be powered on and connected to the same WiFi network
+   as the PC or server that will send the update.
+
+# CMake flags
+
+CMake build options control whether remote update features are enabled:
+
+ - `cmake -DWIFI_SETTINGS_REMOTE=0` will disable all remote update features.
+   This will reduce your application binary size.
+ - `cmake -DWIFI_SETTINGS_REMOTE=1` is the default setting. It allows some
+   basic remote update commands (`info`, `update`, `update_reboot`, `reboot`).
+   These commands only allow you to replace the WiFi settings file and reboot the
+   Pico remotely.
+ - `cmake -DWIFI_SETTINGS_REMOTE=2` is the maximum setting. This enables commands
+   for remote access to Pico memory (RAM and Flash). These powerful commands
+   allow you to replace all of the Pico software "over the air" (OTA)
+   without any physical access to the hardware.
+
+# Update Secret
+
+`update_secret` is a "shared secret" stored in the WiFi settings file and
+also given to the [remote\_picotool](../remote_picotool) program. All remote
+access to the Pico requires the correct update secret.
+
+The update secret should be a password, passphrase or random alphanumeric text.
+You could generate a suitable random update secret using a tool such as
+`openssl rand -base64 33`. Here is an example with a very weak password which
+will be used throughout this document:
+```
+    update_secret=hunter2
+```
+
+# Testing remote access
+
+To test remote access to a Pico application, such as
+the [setup app](SETUP_APP.md), run [remote\_picotool](../remote_picotool) with
+the `info` parameter and the update secret:
+```
+    python remote_picotool --secret hunter2 info
+```
+This will automatically search for your Pico using a UDP broadcast. If successful,
+it will print out some information about your Pico.
+
+# Updating the WiFi settings file by WiFi
+
+To send an updated WiFi settings file, run [remote\_picotool](../remote_picotool) with
+the IP address and the updated WiFi settings file, for example:
+```
+    python remote_picotool --secret hunter2 update_reboot mywifisettings.txt
+```
+The file will be updated on the Pico and then the Pico will reboot (returning
+to your Pico application with the updated WiFi settings file).
+
+# More than one Pico on the network
+
+If you have more than one Pico on your WiFi network, you will need to indicate
+which one should be updated. This can be done in several ways:
+
+ - Use `--address <x.x.x.x>` to provide an IP address (or hostname).
+ - Use `--id <x>` to provide all or part of the board ID (see below).
+ - Use the environment variable `PICO_ADDRESS` to provide an IP address or hostname.
+ - Use the environment variable `PICO_ID` to provide all or part of the board ID.
+
+For example:
+```
+    python remote_picotool --secret hunter2 --id 1718 info
+```
+or
+```
+    python remote_picotool --secret hunter2 --address 192.168.0.200 info
+```
+
+## Board IDs, --id and the list command
+
+To see a list of all devices on your network, you can use the `list` command
+to print the results of a UDP broadcast which triggers a response
+from all Pico devices with a pico-wifi-settings application:
+```
+    python remote_picotool list
+```
+The list shows the board ID and IP address of each Pico. You can use all or part
+of the board ID with the `--id` option in order to select a particular device;
+if a partial ID is used, it can be any substring. For example, `1718` and `854D` will
+both match `E6614854D3B51718`.
+
+Each board ID is unique to a Pico, and can also be printed using `picotool info -d` when the
+Pico is connected by USB (it appears as "flash id" or "chipid" depending on the
+Pico version). The board ID is also shown when running the [setup app](SETUP_APP.md)
+and will be printed out by the `remote_picotool info` command.
+
+## The --address option
+
+Using the address option will cause
+remote\_picotool to connect directly to the IP address you provide.
+This may be preferable to a UDP broadcast, which will only work if your
+development PC and Pico are on the same network.
+
+# Providing the update secret
+
+remote\_picotool requires the update secret for all commands except for `list`.
+The update secret can be provided in several ways:
+
+ - Use `--secret` to provide the update secret on the command line.
+ - Use the environment variable `PICO_UPDATE_SECRET`.
+ - Use the contents of `$APPDATA/pico-wifi-settings-secret`.
+ - Use the contents of `$XDG_CONFIG_HOME/pico-wifi-settings-secret`.
+ - Use the contents of `~/.config/pico-wifi-settings-secret`.
+ - Use the `update_secret=` line in the WiFi settings file that you provide
+   when running an `update_reboot` or `update` command.
+
+If you wish to change the `update_secret=` value, you can do so by (1) putting the
+new value in the wifi-settings file, and (2) using the `--secret` option to provide the
+old value when running the `update_reboot` command.
+
+# Over-the-air (OTA) firmware updates
+
+remote\_picotool can be used to install OTA updates. This feature allows
+you to upgrade your Pico application via WiFi without a USB connection. The requirements
+are as follows:
+
+ - You must build your application with the CMake option `-DWIFI_SETTINGS_REMOTE=2`.
+ - The WiFi settings file must contain an `update_secret`.
+ - Both versions of your application (the existing version and the new version) must
+   use less than half of the available Flash memory. 
+ - For Pico 2 with partitions: Your application must begin at the start of a partition,
+   and the partition must be large enough to contain the old and new versions of your application.
+
+Provided that all of these requirements are met, an OTA update can be started by
+running:
+```
+    python remote_picotool --secret hunter2 ota newfirmwarefile.bin
+```
+The new firmware file must be in the .bin format (not .uf2 or .elf).
+
+The firmware is uploaded and stored temporarily in Flash, at an address outside of the
+existing program. This is necessary because the Pico's RAM is too small to store most
+firmware files. If there is not enough space, then remote\_picotool will detect the problem
+and report an error.
+
+After uploading, the integrity of the temporary copy is checked using SHA256. If the upload
+failed, an error is reported and the existing application continues to run. If the upload was ok, then
+a special procedure in RAM will be executed to replace the current firmware with the
+new firmware, and then the Pico is rebooted.
+
+If the update fails for any reason, or the new firmware does not work,
+the Pico can still be recovered by reprogramming with USB (hold down the BOOTSEL button
+when plugging into USB).
+
+## Known Issue: Partitions on Pico 2
+
+The Pico 2 partition support allows for A/B firmware updates in which new firmware
+can be installed alongside existing firmware, with the possibility to recover from
+a problem by booting the older firmware. However, pico-wifi-settings doesn't support
+this functionality yet, and will only use a single partition (whichever partition is
+currently in use).
+
+## Other features
+
+With `-DWIFI_SETTINGS_REMOTE=2`,
+remote\_picotool can also reboot a Pico into bootloader
+mode. There is a feature to dump memory, which can be used with Flash or RAM, and there
+is a feature to reprogram blocks of Flash without doing a full OTA update.
+
+remote\_picotool can be used to call functions within an application, if they are registered
+as handlers by calling `wifi_settings_remote_set_handler`. These calls are authenticated
+using `update_secret`, and data can be sent and received. This could be useful as a
+general remote procedure call (RPC) system, allowing you to
+activate some application functionality remotely without needing to implement a network API.
+
+# Technical notes
+
+The remote service listens on TCP/IP port 1404.
+
+Broadcasts to UDP port 1404 are used for searching for Pico devices.
+Broadcast is used because multicast does not work reliably with typical home WiFi hotspots.
+
+## Security
+
+The protocol is encrypted with AES-256
+and authenticated using HMAC-SHA256, so it does not rely on network security
+and in principle you can update your Pico via the Internet if you wish, bearing in mind
+that the protocol doesn't provide perfect forward secrecy (i.e. it's possible for an attacker
+to recover all data from a network packet recording if your `update_secret` is discovered).
+
+The encrypted connection is established after the client and server exchange 120-bit
+random numbers ("challenges") which are given to HMAC-SHA256 along with the update secret
+in order to generate four 256-bit values:
+
+ - A response from the client to the server, proving that the client knows the secret.
+ - A response from the server to the client, proving that the server knows the secret.
+ - An AES-256 encryption key for messages from the client to the server.
+ - An AES-256 encryption key for messages from the server to the client.
+
+All four of these values will be different for every connection. After the responses
+are exchanged successfully, all communications are encrypted. The details of the algorithm
+can be seen in the C code ([wifi\_settings\_remote.c](../src/wifi_settings_remote.c))
+and in Python code ([remote\_picotool](../remote_picotool)).
+
+The AES-256 and SHA-256 implementations are reused from mbedtls, which is part of the
+Pico SDK. On Pico 2, hardware support is used for SHA-256.
+
+## Multicore support
+
+On a Pico, access to Flash is shared by both CPU cores, and this can cause issues
+when writing to Flash [described in detail here](https://github.com/raspberrypi/pico-sdk/blob/ee68c78d0afae2b69c03ae1a72bf5cc267a2d94c/src/rp2_common/pico_flash/include/pico/flash.h#L17-L49).
+
+A simple way to avoid some problems is to use `update_reboot` instead of `update`, as
+this stops the second CPU core before updating the wifi-settings file and reboots
+immediately afterwards.
+
+Other Flash-writing commands (`ota`, `load`, `update`) require the use of multicore lockout if
+multiple CPUs are in use. You need to follow the directions in the Pico SDK to enable
+safe multicore Flashing if you wish to use these commands in a multicore system.
+
+## Board IDs
+
+Board IDs consist of 16 hex digits and are unique to every Pico. The board ID
+can be used by `remote_picotool` to find a particular Pico and distinguish
+it from any others that may also be on your WiFi network. The board ID
+should be used with the `--id` option.
+
+The board ID is printed by the [example](../example) and [setup app](SETUP_APP.md) on the
+USB serial port. You can also see the board ID by connecting a Pico by USB and
+running `picotool info -d`. The ID appears as "flash id"
+or "chipid" within "Device Information", e.g.
+```
+    Device Information
+     type:              RP2040
+     flash size:        2048K
+     flash id:          0xE6614854D3B51718
+```
+or
+```
+    Device Information
+     type:                   RP2350
+     package:                QFN60
+     chipid:                 0x7d47cf75b7a48bd7
+```
+The `0x` prefix is not used by pico-wifi-settings when referring to these board IDs,
+which would be represented as `E6614854D3B51718` and `7D47CF75B7A48BD7`.
