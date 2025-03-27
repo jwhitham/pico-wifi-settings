@@ -21,8 +21,7 @@ the WiFi settings file.
    - Pico 2 W: use `setup_app__pico2_w__<version>.uf2`
  - Drag and drop the `.uf2` file for your Pico model from the zip file to your Pico device
  - Connect to Pico W using your serial terminal program
-   - More instructions can be found in the [Getting Started
-    Guide, chapter 5](https://datasheets.raspberrypi.com/pico/getting-started-with-pico.pdf)
+   - More instructions can be found in the [Getting Started Guide, chapter 5](https://datasheets.raspberrypi.com/pico/getting-started-with-pico.pdf)
    - Briefly, using minicom on Linux, enter `minicom -D /dev/ttyACM0`
    - On Windows, your Pico will appear as a COM port which you can use
      with [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) in its
@@ -128,7 +127,10 @@ Some hotspot types are not supported (or have never been tested). These include:
  - hotspots using legacy authentication types (WEP, TKIP);
  - hotspots that have a "captive portal" page, as free public WiFi services often do,
    since it is not possible for the Pico to log in to the captive portal page;
- - hotspots using RADIUS authentication.
+ - hotspots that aren't supported by the `cyw43` driver.
+
+WiFi hotspots do not need to offer Internet access, but they must have a DHCP server,
+because the library does not provide a way to set a static IP address yet.
 
 # Building from source
 

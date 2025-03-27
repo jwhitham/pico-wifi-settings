@@ -599,7 +599,7 @@ static void server_tcp_close(struct tcp_pcb *client_pcb) {
     tcp_close(client_pcb);
 }
 
-static void server_err(void *arg, err_t) {
+static void server_err(void *arg, err_t unused) {
     // Called if there is a TCP error with the connection or from the remote side.
     // This callback:
     // * must free the arg pointer (if not NULL)
@@ -713,7 +713,7 @@ static err_t server_recv(void* arg, struct tcp_pcb* client_pcb, struct pbuf* p, 
     return ERR_OK;
 }
 
-static err_t server_sent(void *arg, struct tcp_pcb *client_pcb, uint16_t) {
+static err_t server_sent(void *arg, struct tcp_pcb *client_pcb, uint16_t unused) {
     // Called when a packet is sent, and so there is more space is the output buffer,
     // possibly allowing more data to be sent.
     //
@@ -797,7 +797,7 @@ static err_t server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
 }
 
 static void responder_recv(
-        void*,
+        void* unused,
         struct udp_pcb *pcb,
         struct pbuf *p,
         const ip_addr_t *addr,

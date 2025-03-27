@@ -208,7 +208,7 @@ static enum ssid_type_t fetch_ssid(uint ssid_index, char* ssid, uint8_t* bssid) 
     return NONE;
 }
 
-static int wifi_scan_callback(void*, const cyw43_ev_scan_result_t* scan_result) {
+static int wifi_scan_callback(void* unused, const cyw43_ev_scan_result_t* scan_result) {
     // Is this SSID known? Iterate through the file to see if there is a record of it.
     for (uint ssid_index = 1; ssid_index <= NUM_SSIDS; ssid_index++) {
         // Skip SSIDs that we already saw
@@ -354,7 +354,7 @@ static void begin_new_scan() {
     g_wifi_state.scan_holdoff_time = make_timeout_time_ms(REPEAT_SCAN_TIME_MS);
 }
 
-static void wifi_settings_periodic_callback(async_context_t*, async_at_time_worker_t*) {
+static void wifi_settings_periodic_callback(async_context_t* unused1, async_at_time_worker_t* unused2) {
     switch (g_wifi_state.cstate) {
         case TRY_TO_CONNECT:
             // In this state, we are not connected, and we are waiting for a holdoff time

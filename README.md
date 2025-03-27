@@ -21,6 +21,7 @@ easily change your WiFi password or move your Pico to a different WiFi hotspot.
  - Raspberry Pi Pico W or Pico 2 W hardware
  - A "bare metal" C/C++ application for Pico (not FreeRTOS)
  - between 2kb and 13kb of code space depending on options used
+ - WiFi network(s) with a DHCP server and WPA authentication
 
 pico-wifi-settings uses the `cyw43` driver and `lwip` network stack
 which are provided with the
@@ -107,4 +108,6 @@ the implementations diverged and became harder to maintain, and it wasn't easy t
 update WiFi settings (or anything else). So I decided to turn it into a reusable library
 with all of the features I wanted. This is it!
 
-You can read about [implementation details in this document](doc/IMPLEMENTATION.md).
+For more information about the development of pico-wifi-settings,
+[see this short article](https://www.jwhitham.org/2025/03/pico-wifi-settings.html).
+You can also read about [implementation details in this document](doc/IMPLEMENTATION.md).

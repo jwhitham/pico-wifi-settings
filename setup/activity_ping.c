@@ -86,7 +86,7 @@ static err_t ping_send(ping_data_t* ping_data, struct raw_pcb *raw, const ip_add
 }
 
 // This is based on the LWIP example contrib/apps/ping/ping.c
-static u8_t ping_recv(void *arg, struct raw_pcb *, struct pbuf *p, const ip_addr_t *addr) {
+static u8_t ping_recv(void *arg, struct raw_pcb *unused, struct pbuf *p, const ip_addr_t *addr) {
     const uint32_t capture_time = time_us_32();
     ping_data_t* ping_data = (ping_data_t*) arg;
     int ttl = 0;

@@ -19,17 +19,17 @@
 
 typedef bool (* callback_t) (wifi_slot_data_t* slot_data, wifi_slot_item_t* item);
 
-static bool set_ssid(wifi_slot_data_t*, wifi_slot_item_t* item) {
+static bool set_ssid(wifi_slot_data_t* unused, wifi_slot_item_t* item) {
     printf("\nPlease edit the SSID:\n");
     return ui_text_entry(item->ssid, WIFI_SSID_SIZE);
 }
 
-static bool set_pass(wifi_slot_data_t*, wifi_slot_item_t* item) {
+static bool set_pass(wifi_slot_data_t* unused, wifi_slot_item_t* item) {
     item->is_open = false;
     return ui_ask_for_password(item->ssid, item->password);
 }
 
-static bool convert_to_open(wifi_slot_data_t*, wifi_slot_item_t* item) {
+static bool convert_to_open(wifi_slot_data_t* unused, wifi_slot_item_t* item) {
     item->is_open = true;
     strcpy(item->password, "");
     printf("\nThe password will be removed. Are you sure? ");

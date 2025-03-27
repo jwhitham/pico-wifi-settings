@@ -132,7 +132,7 @@ static err_t telnet_client_sent(void *arg, struct tcp_pcb *tcp_pcb, u16_t len) {
     return ERR_OK;
 }
 
-static err_t telnet_client_connected(void *arg, struct tcp_pcb*, err_t err) {
+static err_t telnet_client_connected(void *arg, struct tcp_pcb* unused, err_t err) {
     // Called when connected - or if there is a connection error
     telnet_data_t* telnet_data = (telnet_data_t*)arg;
     if (!telnet_data) {
@@ -149,7 +149,7 @@ static err_t telnet_client_connected(void *arg, struct tcp_pcb*, err_t err) {
     }
 }
 
-static void telnet_client_err(void*, err_t) {
+static void telnet_client_err(void* unused1, err_t unused2) {
     // Called if there is a TCP error with the connection or from the remote side.
     // This callback:
     // * must free the arg pointer (if not NULL and allocated on the heap) - in this case

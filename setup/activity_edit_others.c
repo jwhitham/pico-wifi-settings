@@ -21,7 +21,7 @@
 
 typedef void (* callback_t) (void);
 
-static bool accept_country_code(const char*, char* value) {
+static bool accept_country_code(const char* unused, char* value) {
     if (strlen(value) != 2) {
         printf("The country code must be exactly two letters.\n");
         return false;
