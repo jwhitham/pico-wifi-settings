@@ -11,7 +11,7 @@
 #include "user_interface.h"
 #include "edit_key_value.h"
 #include "file_operations.h"
-#include "wifi_settings/wifi_settings_remote.h"
+#include "wifi_settings.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -48,5 +48,7 @@ void activity_set_shared_secret() {
             "updates, see %s\n", WIFI_SETTINGS_PROJECT_URL);
     }
     edit_key_value(&fh, key, NULL, true, accept_update_secret);
+#ifdef ENABLE_REMOTE_UPDATE
     wifi_settings_remote_update_secret();
+#endif
 }

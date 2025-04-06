@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # Setup app for pico-wifi-settings.
+# See /doc/SETUP_APP.md for build instructions.
 #
 cmake_minimum_required(VERSION 3.12)
 
@@ -42,21 +43,23 @@ add_executable(setup
     )
 target_include_directories(setup PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/config
     )
 target_link_libraries(setup PRIVATE
         pico_cyw43_arch_lwip_threadsafe_background
         wifi_settings 
         pico_stdlib
+        pico_multicore
     )
 target_compile_options(setup PRIVATE
     -Wall -Wextra -Werror
     -Wno-unused-parameter
 )
-if (NOT DEMO_GIT_COMMIT)
-    set(DEMO_GIT_COMMIT "??")
+if (NOT SETUP_GIT_COMMIT)
+    set(SETUP_GIT_COMMIT "??")
 endif()
 target_compile_definitions(setup PRIVATE
-    DEMO_GIT_COMMIT="${DEMO_GIT_COMMIT}"
+    SETUP_GIT_COMMIT="${SETUP_GIT_COMMIT}"
 )
 
 pico_enable_stdio_usb(setup 1)

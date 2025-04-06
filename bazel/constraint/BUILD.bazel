@@ -1,0 +1,15 @@
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "enable_remote_update_only",
+    flag_values = {
+        "//bazel/config:WIFI_SETTINGS_REMOTE": "1",
+    },
+)
+
+config_setting(
+    name = "enable_remote_update_and_remote_memory_access",
+    flag_values = {
+        "//bazel/config:WIFI_SETTINGS_REMOTE": "2",
+    },
+)

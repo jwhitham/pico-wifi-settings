@@ -1,0 +1,45 @@
+#
+# Copyright (c) 2025 Jack Whitham
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Bazel project example for pico-wifi-settings.
+# Please see /doc/BAZEL.md for more information!
+#
+module(
+    name = "example",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "pico-sdk", version = "2.1.1")
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "rules_python", version = "0.40.0")
+bazel_dep(name = "rules_cc", version = "0.0.17")
+bazel_dep(name = "pico-wifi-settings", version = "")
+
+# This example fetches pico-wifi-settings from the parent directory, but your
+# project could use git_override to fetch pico-wifi-settings from Github. See below:
+local_path_override(
+    module_name = "pico-wifi-settings",
+    path = "..",
+)
+
+#git_override(
+#    module_name = "pico-wifi-settings",
+#    commit = ".....",  # <-- use a commit ID matching the tag of the most recent release
+#    remote = "https://github.com/jwhitham/pico-wifi-settings.git",
+#)
+
+register_toolchains(
+    "@pico-sdk//bazel/toolchain:linux-x86_64-rp2040",
+    "@pico-sdk//bazel/toolchain:linux-x86_64-rp2350",
+    "@pico-sdk//bazel/toolchain:win-x86_64-rp2040",
+    "@pico-sdk//bazel/toolchain:win-x86_64-rp2350",
+    "@pico-sdk//bazel/toolchain:mac-x86_64-rp2040",
+    "@pico-sdk//bazel/toolchain:mac-x86_64-rp2350",
+    "@pico-sdk//bazel/toolchain:mac-aarch64-rp2040",
+    "@pico-sdk//bazel/toolchain:mac-aarch64-rp2350",
+)
+
+

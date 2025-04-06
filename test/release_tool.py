@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import typing
 from pathlib import Path
@@ -76,16 +77,33 @@ def main() -> None:
     if not git_commit:
         raise Exception("Unable to determine git commit")
 
-    # Version
-    re_version = re.compile(r'^set.WIFI_SETTINGS_VERSION_STRING "(.+)".*$')
-    version = ""
+    # Version (CMake)
+    re_cmake_version = re.compile(r'^set.WIFI_SETTINGS_VERSION_STRING "(.+)".*$')
+    cmake_version = ""
     for line in open(PICO_WIFI_SETTINGS_ROOT_PATH / "CMakeLists.txt", "rt"):
-        m = re_version.match(line)
+        m = re_cmake_version.match(line)
         if m is not None:
-            version = m.group(1)
+            cmake_version = m.group(1)
+            break
         
-    if not version:
-        raise Exception("Unable to determine library version")
+    if not cmake_version:
+        raise Exception("Unable to determine library version (CMake)")
+
+    # Version (Bazel)
+    re_bazel_version = re.compile(r'^\s*version\s*=\s*"(.+)"\s*,.*$')
+    bazel_version = ""
+    for line in open(PICO_WIFI_SETTINGS_ROOT_PATH / "MODULE.bazel", "rt"):
+        m = re_bazel_version.match(line)
+        if m is not None:
+            bazel_version = m.group(1)
+            break
+        
+    if not bazel_version:
+        raise Exception("Unable to determine library version (Bazel)")
+    if bazel_version != cmake_version:
+        raise Exception("Bazel and CMake library versions don't match: "
+            f"Bazel {bazel_version} CMake {cmake_version}")
+    version = cmake_version
 
     # Create output directory
     target_path = PICO_WIFI_SETTINGS_ROOT_PATH / "release"
@@ -100,6 +118,14 @@ def main() -> None:
         "git_commit": git_commit,
         "version": version,
     }, indent=4))
+
+    # Create Git archive of source code; Github will do this for me as well,
+    # but I would like a locally-built copy to provide another way to test a release
+    subprocess.check_call([
+        "git", "archive", git_commit,
+        f"--prefix=pico-wifi-settings-{version}/",
+        "-o", str(target_path / f"pico-wifi-settings-{version}.tar.gz"),
+    ], cwd=PICO_WIFI_SETTINGS_ROOT_PATH)
 
     # Estimated size impact of wifi-settings
     sizes: typing.Dict[typing.Any, int] = {}
@@ -135,7 +161,7 @@ def main() -> None:
             elf_file=target_path / f"setup_app__{board}__{version}.elf",
             cmake_args=[f"-DPICO_BOARD={board}",
                         f"-DWIFI_SETTINGS_REMOTE=2",
-                        f"-DDEMO_GIT_COMMIT={git_commit}"])
+                        f"-DSETUP_GIT_COMMIT={git_commit}"])
 
     # Build the example (to check it builds)
     for board in BOARDS:
@@ -144,6 +170,12 @@ def main() -> None:
             target_file=None,
             elf_file=target_path / f"example__{board}__{version}.elf",
             cmake_args=[f"-DPICO_BOARD={board}"])
+
+    # Testing
+    subprocess.check_call([
+        sys.executable,
+        "-m", "pytest", ".",
+    ], cwd=PICO_WIFI_SETTINGS_ROOT_PATH / "test")
 
     # store release artefacts
     shutil.make_archive(

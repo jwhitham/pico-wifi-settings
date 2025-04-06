@@ -15,10 +15,11 @@ with just a few lines of code:
 ```
 The following steps go through the process in more detail for
 a [CMake](https://cmake.org) project stored in Git,
-similar to all of the official Pico projects.
+similar to all of the official Pico projects. If you are using
+[Bazel](https://bazel.build) then there are some [Bazel-specific instructions](/doc/BAZEL.md).
 
-You can also look at [a simple example](../example) with about 150
-lines of C code, or the more complex [setup app](doc/SETUP_APP.md).
+You can also look at [a simple example](/example) with about 150
+lines of C code, or the more complex [setup app](/doc/SETUP_APP.md).
 
 ## Import pico-wifi-settings
 

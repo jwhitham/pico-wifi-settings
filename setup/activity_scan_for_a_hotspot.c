@@ -241,6 +241,7 @@ void activity_scan_for_a_hotspot() {
     wifi_slots_renumber(&slot_data);
     wifi_slots_save(&fh, &slot_data);
     if (ui_file_save(&fh)) {
+        // reconnect after adding the new hotspot
         wifi_settings_connect();
     }
 }

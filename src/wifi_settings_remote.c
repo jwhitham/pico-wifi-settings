@@ -10,7 +10,6 @@
 #include "wifi_settings.h"
 #include "wifi_settings/wifi_settings_remote.h"
 #include "wifi_settings/wifi_settings_remote_handlers.h"
-#include "wifi_settings/wifi_settings_remote_memory_access_handlers.h"
 #include "wifi_settings/wifi_settings_flash_storage.h"
 
 #include "pico/rand.h"
@@ -30,6 +29,9 @@
 #include <inttypes.h>
 #include <stdlib.h>
 
+#ifdef ENABLE_REMOTE_MEMORY_ACCESS
+#include "wifi_settings/wifi_settings_remote_memory_access_handlers.h"
+#endif
 #ifndef MBEDTLS_AES_C
 #error "MBEDTLS_AES_C must be enabled"
 #endif

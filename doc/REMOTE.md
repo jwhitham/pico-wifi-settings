@@ -32,6 +32,8 @@ CMake build options control whether remote update features are enabled:
    allow you to replace all of the Pico software "over the air" (OTA)
    without any physical access to the hardware.
 
+There are [Bazel equivalents](/doc/BAZEL.md) of these options for Bazel projects.
+
 # Update Secret
 
 `update_secret` is a "shared secret" stored in the WiFi settings file and
@@ -219,6 +221,8 @@ Pico SDK. On Pico 2, hardware support is used for SHA-256.
 
 On a Pico, access to Flash is shared by both CPU cores, and this can cause issues
 when writing to Flash [described in detail here](https://github.com/raspberrypi/pico-sdk/blob/ee68c78d0afae2b69c03ae1a72bf5cc267a2d94c/src/rp2_common/pico_flash/include/pico/flash.h#L17-L49).
+The setup app uses the `flash_safe_execute_core_init()` function to allow
+writing to Flash when using both cores - see [setup.c](/setup/setup.c).
 
 A simple way to avoid some problems is to use `update_reboot` instead of `update`, as
 this stops the second CPU core before updating the wifi-settings file and reboots

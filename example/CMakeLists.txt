@@ -4,6 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # Example for pico-wifi-settings.
+# Build steps for Pico W:
+#   mkdir build
+#   cd build
+#   cmake -DPICO_BOARD=pico_w -DPICO_SDK_PATH=<path to Pico SDK> ..
+#   make
 #
 cmake_minimum_required(VERSION 3.12)
 

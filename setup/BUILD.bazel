@@ -1,0 +1,68 @@
+#
+# Copyright (c) 2025 Jack Whitham
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Setup app for pico-wifi-settings.
+# See /doc/BAZEL.md for instructions.
+# 
+
+load("@pico-sdk//bazel/util:sdk_define.bzl", "pico_sdk_define")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "setup_lwipopts",
+    hdrs = ["config/lwipopts.h"],
+    includes = ["config"],
+)
+
+pico_sdk_define(
+    name = "SETUP_GIT_COMMIT",
+    define_name = "SETUP_GIT_COMMIT",
+    from_flag = "//bazel/config:SETUP_GIT_COMMIT",
+)
+
+cc_binary(
+    name = "setup",
+    srcs = [
+       "activity_connection_test.h",
+       "activity_dns_test.h",
+       "activity_edit_hotspots.h",
+       "activity_edit_others.h",
+       "activity_force_disconnect_reconnect.h",
+       "activity_ping.h",
+       "activity_root.h",
+       "activity_scan_for_a_hotspot.h",
+       "activity_set_shared_secret.h",
+       "activity_telnet_test.h",
+       "dns_lookup.h",
+       "edit_key_value.h",
+       "file_operations.h",
+       "user_interface.h",
+       "wifi_slots.h",
+       "activity_connection_test.c",
+       "activity_dns_test.c",
+       "activity_edit_hotspots.c",
+       "activity_edit_others.c",
+       "activity_force_disconnect_reconnect.c",
+       "activity_ping.c",
+       "activity_root.c",
+       "activity_scan_for_a_hotspot.c",
+       "activity_set_shared_secret.c",
+       "activity_telnet_test.c",
+       "dns_lookup.c",
+       "edit_key_value.c",
+       "file_operations.c",
+       "setup.c",
+       "user_interface.c",
+       "wifi_slots.c",
+    ],
+    includes = ["."],
+    deps = [
+        "//:pico-wifi-settings",
+        "@pico-sdk//src/rp2_common/pico_multicore",
+        ":SETUP_GIT_COMMIT",
+    ],
+)
+

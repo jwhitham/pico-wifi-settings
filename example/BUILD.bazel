@@ -1,0 +1,22 @@
+#
+# Copyright (c) 2025 Jack Whitham
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Bazel project example for pico-wifi-settings.
+# Please see /doc/BAZEL.md for more information!
+# 
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "example_lwipopts",
+    hdrs = ["lwipopts.h"],
+)
+
+cc_binary(
+    name = "example",
+    srcs = ["example.c"],
+    deps = ["@pico-wifi-settings//:pico-wifi-settings"],
+)
+

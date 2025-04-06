@@ -34,13 +34,13 @@
 #ifndef WIFI_SETTINGS_VERSION_STRING
 #error "WIFI_SETTINGS_VERSION_STRING should be set (in CMakeLists.txt)"
 #endif
-#ifndef DEMO_GIT_COMMIT
-#error "DEMO_GIT_COMMIT should be set (in CMakeLists.txt)"
+#ifndef SETUP_GIT_COMMIT
+#error "SETUP_GIT_COMMIT should be set (in CMakeLists.txt)"
 #endif
 
 void ui_clear() {
     printf("\x1b[2J\rpico-wifi-settings setup app, version "
-        WIFI_SETTINGS_VERSION_STRING "-" DEMO_GIT_COMMIT "\n");
+        WIFI_SETTINGS_VERSION_STRING "-" SETUP_GIT_COMMIT "\n");
     printf("This Pico has board id %s\n\n", wifi_settings_get_board_id_hex());
     fflush(stdout);
 }

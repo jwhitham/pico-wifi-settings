@@ -1,0 +1,91 @@
+#
+# Copyright (c) 2025 Jack Whitham
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# pico-wifi-settings toplevel BUILD.bazel
+#
+# Defines the pico-wifi-settings Bazel target, ready to be linked to
+# Pico or Pico 2 applications. See /doc/BAZEL.md for instructions.
+#
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "pico-wifi-settings",
+    srcs = [
+        "src/wifi_settings_flash_storage.c",
+        "src/wifi_settings_hostname.c",
+        "src/wifi_settings_connect.c",
+        "src/wifi_settings_flash_range.c",
+    ] + select({
+        "//bazel/constraint:enable_remote_update_only": [
+            "src/wifi_settings_remote.c",
+            "src/wifi_settings_remote_handlers.c",
+        ],
+        "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
+            "src/wifi_settings_remote.c",
+            "src/wifi_settings_remote_handlers.c",
+            "src/wifi_settings_remote_memory_access_handlers.c",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "include/wifi_settings/wifi_settings_connect.h",
+        "include/wifi_settings/wifi_settings_hostname.h",
+        "include/wifi_settings/wifi_settings_configuration.h",
+        "include/wifi_settings/wifi_settings_flash_range.h",
+        "include/wifi_settings/wifi_settings_flash_storage.h",
+        "include/wifi_settings/wifi_settings_connect_internal.h",
+        "include/wifi_settings.h",
+    ] + select({
+        "//bazel/constraint:enable_remote_update_only": [
+            "include/wifi_settings/wifi_settings_remote.h",
+            "include/wifi_settings/wifi_settings_remote_handlers.h",
+        ],
+        "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
+            "include/wifi_settings/wifi_settings_remote.h",
+            "include/wifi_settings/wifi_settings_remote_handlers.h",
+            "include/wifi_settings/wifi_settings_remote_memory_access_handlers.h",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    defines = [
+        'WIFI_SETTINGS_VERSION_STRING=\\"' + module_version() + '\\"',
+        'WIFI_SETTINGS_PROJECT_URL=\\"https://github.com/jwhitham/pico-wifi-settings\\"',
+    ] + select({
+        "//bazel/constraint:enable_remote_update_only": [
+            "ENABLE_REMOTE_UPDATE=1",
+        ],
+        "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
+            "ENABLE_REMOTE_UPDATE=1",
+            "ENABLE_REMOTE_MEMORY_ACCESS=1",
+        ],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        "@pico-sdk//bazel/constraint:cyw43_wireless": [],
+        "@pico-sdk//bazel/constraint:is_pico_w": [],
+        "@pico-sdk//bazel/constraint:is_pico2_w": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "@pico-sdk//src/common/pico_sync",
+        "@pico-sdk//src/rp2_common/hardware_flash",
+        "@pico-sdk//src/rp2_common/pico_flash",
+        "@pico-sdk//src/rp2_common/pico_cyw43_arch",
+        "@pico-sdk//src/rp2_common/pico_stdlib",
+        "@pico-sdk//src/rp2_common/pico_unique_id",
+        "@pico-sdk//src/rp2_common/pico_lwip:pico_lwip_nosys",
+    ] + select({
+        # mbedtls library: see note in /MODULE.bazel
+        "//bazel/constraint:enable_remote_update_only": [
+            "@mbedtls_aes_sha256",
+        ],
+        "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
+            "@mbedtls_aes_sha256",
+        ],
+        "//conditions:default": [],
+    })
+)

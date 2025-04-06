@@ -1,7 +1,7 @@
 # pico-wifi-settings
 
 This [Raspberry Pi Pico
-W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#pico-2-family)
+W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html)
 library manages WiFi connections for your Pico application. It provides:
  - [Flash storage for WiFi passwords and hotspot names](doc/SETTINGS_FILE.md) ("SSIDs"),
  - a background `async_context` service to automatically connect to them,
