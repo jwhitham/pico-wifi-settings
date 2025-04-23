@@ -625,7 +625,19 @@ class PicoInfo(KeyValueStore):
 
     @property
     def logical_offset(self) -> int:
+        """Return the absolute unremapped address of the first byte of Flash memory.
+
+        This is the absolute address that a program running on the Pico CPU would use
+        to access the first byte of Flash, bypassing any remapping (partitioning)."""
         return self.get_int("logical_offset")
+
+    @property
+    def uf2_program_start_offset(self) -> int:
+        """Return the potentially-remapped address of the first byte of Flash memory.
+
+        This is the address that would be used inside a UF2 file to refer to the beginning
+        of Flash. It is constant. The physical address might be very different (partitioning)."""
+        return 0x10000000
 
     @property
     def flash_size(self) -> int:
@@ -681,6 +693,13 @@ class PicoInfo(KeyValueStore):
             }.get(self.part_number, "<not known>")
         else:
             return "<not RPi>"
+
+    @property
+    def expected_family(self) -> "Family":
+        return {
+            "RP2040": Family.RP2040,
+            "RP2350": Family.RP2350_ARM_S,
+        }.get(self.type_name, Family.UNKNOWN)
 
 async def get_pico_connection(args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
     """Connect to a Pico, determining the address and port from
@@ -863,6 +882,177 @@ def get_file_type(filename: Path) -> FileType:
         return FileType.WIFI_SETTINGS
 
     return FileType.BINARY
+
+class Family(enum.Enum):
+    UNKNOWN = 0
+    RP2040 = 0xe48bff56 # "Raspberry Pi RP2040"
+    RP2XXX_ABSOLUTE = 0xe48bff57 # "Raspberry Pi Microcontrollers: Absolute (unpartitioned) download"
+    RP2XXX_DATA = 0xe48bff58 # "Raspberry Pi Microcontrollers: Data partition download"
+    RP2350_ARM_S = 0xe48bff59 # "Raspberry Pi RP2350, Secure Arm image"
+    RP2350_RISCV = 0xe48bff5a # "Raspberry Pi RP2350, RISC-V image"
+    RP2350_ARM_NS = 0xe48bff5b # "Raspberry Pi RP2350, Non-secure Arm image"
+
+class FileReader:
+    def __init__(self, pico_info: PicoInfo, family: Family) -> None:
+        self.pico_info = pico_info
+        self.family = family
+        self.data = bytes()
+        self.flash_offset = 0
+
+    @abstractmethod
+    def read(self, filename: Path) -> None:
+        pass
+
+    def set_lower_bound(self, flash_offset: int) -> None:
+        self.flash_offset = flash_offset
+   
+    @property
+    def lower_bound(self) -> int:
+        return self.flash_offset
+
+    @property
+    def upper_bound(self) -> int:
+        return self.flash_offset + len(self.data)
+
+    @property
+    def size(self) -> int:
+        return len(self.data)
+
+    def get_sha256(self) -> bytes:
+        return hashlib.sha256(self.data).digest()
+
+    def get_blocks(self) -> typing.Iterator[typing.Tuple[int, bytes]]:
+        """Returns an iterator (flash_offset, block_data) for every block. Call align() first."""
+        block_offset = 0
+        block_size = self.pico_info.max_data_size
+        flash_offset = self.lower_bound
+        for i in range((self.size + block_size - 1) // block_size):
+            yield (flash_offset, self.data[block_offset : block_offset + block_size])
+            block_offset += block_size
+            flash_offset += block_size
+
+    def align(self) -> None:
+        """Ensure that the bounds of the data are aligned to the Pico Flash sector size, padding as needed."""
+
+        # Get current bounds for the data
+        block_size = self.pico_info.flash_sector_size
+        all_blocks_start_offset = self.lower_bound
+        all_blocks_end_offset = self.upper_bound
+
+        # Add padding before (if needed)
+        mask = block_size - 1
+        pad_before = self.lower_bound & mask
+        if pad_before > 0:
+            self.add_block(self.lower_bound - pad_before, b"\xff" * pad_before)
+        assert self.upper_bound == all_blocks_end_offset
+
+        # Add padding after (if needed)
+        pad_after = block_size - (self.upper_bound & mask)
+        if pad_after < block_size:
+            self.add_block(self.upper_bound, b"\xff" * pad_after)
+
+        # Ensure that the data stayed in the same place but was padded appropriately
+        assert self.lower_bound <= all_blocks_start_offset
+        assert self.upper_bound >= all_blocks_end_offset
+        assert (self.size % block_size) == 0
+        assert (self.lower_bound % block_size) == 0
+
+    def add_block(self, new_block_start_offset: int, new_block_data: bytes) -> None:
+        """Add a new block to the file data."""
+
+        # Get current bounds for the data
+        all_blocks_start_offset = self.lower_bound
+        all_blocks_end_offset = self.upper_bound
+        new_block_end_offset = new_block_start_offset + len(new_block_data)
+
+        if len(self.data) == 0:
+            # First block special case
+            self.data = new_block_data
+            self.flash_offset = new_block_start_offset
+            assert self.lower_bound == new_block_start_offset
+            assert self.upper_bound == new_block_end_offset
+
+        elif new_block_end_offset <= self.lower_bound:
+            # New block appears before whatever we already have (with a gap of 0 or more bytes)
+            gap = self.lower_bound - new_block_end_offset
+            self.data = new_block_data + (b"\xff" * gap) + self.data
+            self.flash_offset = new_block_start_offset
+            assert self.lower_bound == new_block_start_offset
+            assert self.upper_bound == all_blocks_end_offset
+
+        elif new_block_start_offset < self.upper_bound:
+            # New block appears within whatever we already have (overlapping at least 1 byte)
+            raise LocalError(
+                f"Blocks overlap in the input file: new block 0x{new_block_start_offset} "
+                f".. 0x{new_block_end_offset} is within existing blocks "
+                f"0x{self.lower_bound} .. 0x{self.upper_bound}")
+
+        else:
+            # New block appears after whatever we already have (with a gap of 0 or more bytes)
+            gap = new_block_start_offset - self.upper_bound
+            self.data = self.data + (b"\xff" * gap) + new_block_data
+            assert self.lower_bound == all_blocks_start_offset
+            assert self.upper_bound == new_block_end_offset
+
+class BinaryFileReader(FileReader):
+    def read(self, filename: Path) -> None:
+        with open(filename, "rb") as fd:
+            self.add_block(0, fd.read())
+
+class UF2FileReader(FileReader):
+    def read(self, filename: Path) -> None:
+        with open(filename, "rb") as fd:
+            uf2_block_size = 512
+            uf2_max_data_size = 476
+            wrong_family = False
+            while True:
+                raw_block = fd.read(uf2_block_size)
+                if len(raw_block) == 0:
+                    break # end of file
+                if len(raw_block) != uf2_block_size:
+                    raise LocalError(f"The UF2 file size must be a multiple of {uf2_block_size}")
+
+                header_words = struct.unpack("<8I", raw_block[:32])
+                footer_words = struct.unpack("<I", raw_block[-4:])
+                if ((header_words[0] != 0x0A324655)
+                or (header_words[1] != 0x9E5D5157)
+                or (footer_words[0] != 0x0AB16F30)):
+                    raise LocalError(f"The UF2 file has incorrect magic numbers")
+
+                flags = header_words[2]
+                if flags & 0x1001:
+                    # Either: "no main flash flag" (0x1) or "file container flag" (0x1000) -> skip
+                    continue
+
+                if not (flags & 0x2000):
+                    # Family ID is not set - skip
+                    continue
+
+                try:
+                    block_family = Family(header_words[7])
+                except ValueError:
+                    block_family = Family.UNKNOWN
+
+                if block_family != self.family:
+                    # family ID is incorrect - skip
+                    wrong_family = True
+                    continue
+
+                flash_offset = header_words[3] - self.pico_info.uf2_program_start_offset
+                data_size = header_words[4]
+                if data_size > uf2_max_data_size:
+                    raise LocalError(f"The UF2 file has an incorrect data size")
+                if ((flash_offset < 0)
+                or ((flash_offset + data_size) >= self.pico_info.flash_size)):
+                    # UF2 can only be used to load into Flash
+                    raise LocalError(f"The UF2 file contains a block that is outside of Flash")
+
+                self.add_block(flash_offset, raw_block[32:32 + data_size])
+
+            if wrong_family and self.size == 0:
+                raise LocalError(
+                    f"The UF2 file doesn't contain any blocks with the expected family {self.family.name}")
+
 
 def get_update_secret(args: argparse.Namespace) -> bytes:
     """Get the update secret
@@ -1109,23 +1299,23 @@ def subcommand_save(args: argparse.Namespace) -> None:
 
 async def do_load(client: Client, filename: Path,
                   load_offset: typing.Optional[int],
-                  ota_mode: bool) -> typing.Tuple[int, int, bytes]:
+                  ota_mode: bool) -> typing.Tuple[int, FileReader]:
 
     # Sanity check for the file type
     file_type = get_file_type(filename)
     if file_type == FileType.WIFI_SETTINGS:
         raise LocalError(f"File '{filename}' appears to be a text file; " +
-                          "this command requires a memory image file (.bin)")
-    elif file_type == FileType.UF2:
-        raise LocalError(f"File '{filename}' appears to be a UF2 firmware file; " +
-                          "this command requires a memory image file (.bin)")
+                          "this command requires a memory image file (.bin) or UF2 firmware file")
     elif file_type == FileType.ELF:
         raise LocalError(f"File '{filename}' appears to be an ELF file; " +
-                          "this command requires a memory image file (.bin)")
+                          "this command requires a memory image file (.bin) or UF2 firmware file")
     elif file_type == FileType.NOT_FOUND:
         raise LocalError(f"File '{filename}' does not exist")
 
-    # Get the Pico info first, in order to know enough about the existing program and Flash memory
+    # In OTA mode, this is the installation address, it is otherwise unused
+    copy_to_offset = 0
+
+    # Get the Pico info, in order to know enough about the existing program and Flash memory
     pico_info = PicoInfo()
     await pico_info.load(client)
 
@@ -1142,56 +1332,70 @@ async def do_load(client: Client, filename: Path,
     and ((max_free_address & mask) == 0)):
         raise RemoteError("Pico Info appears to contain inconsistent data")
 
-    # Check data file size and offset
+    # Expected family for this device
+    expected_family = pico_info.expected_family
+
+    # Read the file
+    file_reader: FileReader
+    if file_type == FileType.UF2:
+        file_reader = UF2FileReader(pico_info, expected_family)
+    else:
+        file_reader = BinaryFileReader(pico_info, expected_family)
+
+    file_reader.read(filename)
+
+    if file_reader.size == 0:
+        raise LocalError(f"File '{filename}' is empty")
+
+    # Determine the load offset (the Flash address where the new data should begin)
+    min_offset = min_free_address
+    if ota_mode:
+        # In OTA mode the load offset will always be the end of the old program
+        # or the new program (once installed), whichever is greater. Even when
+        # loading a UF2 file. This is because the temporary storage must allow enough
+        # space for the new program to be installed.
+        assert load_offset is None
+        file_reader.align()
+        min_offset = max(min_free_address, file_reader.upper_bound)
+        copy_to_offset = file_reader.lower_bound
+        file_reader.set_lower_bound(min_offset)
+
+    elif file_type == FileType.UF2:
+        # For a UF2 file, when not doing an OTA update, we use the offsets in the file
+        if load_offset is not None:
+            raise LocalError(f"An offset cannot be specified when using an UF2 firmware file")
+        file_reader.align()
+
+    else:
+        # Binary files require a load offset; we add this first, and then apply alignment
+        if load_offset is None:
+            raise LocalError(f"An offset must be specified when using a memory image file (.bin)")
+
+        file_reader.set_lower_bound(load_offset + file_reader.lower_bound)
+        file_reader.align()
+
+    # Check whether data would be written to a valid place in Flash.
     # The user is not allowed to overwrite the current program, because although the
     # Flash writing procedure is in RAM, the TCP stack, WiFi driver and wifi-settings are not,
-    # and as only max_data_size bytes can be uploaded at once, the program would be only
-    # partially overwritten, which would be very bad.
-    data_size = filename.stat().st_size
-    min_offset = min_free_address
+    # and as only max_data_size bytes can be uploaded at once, the program would be partially
+    # overwritten while it was still running, which would be very bad.
+    if ((file_reader.lower_bound < min_offset)
+    or (file_reader.upper_bound > max_free_address)):
+        raise LocalError(
+            f"File '{filename}' cannot be loaded because data "
+            f"would be written outside of the available Flash range "
+            f"0x{min_offset:08x} .. 0x{max_free_address:08x}. Load range is "
+            f"0x{file_reader.lower_bound:08x} .. 0x{file_reader.upper_bound:08x}.")
 
-    if ota_mode:
-        # the new program's load address must allow enough room for it to be copied
-        # over the old program, so compute the end address of the new program once
-        # it is installed
-        program_offset = pico_info.flash_program_range[0]
-        min_offset = program_offset + (data_size | mask) + 1
+    total_size = file_reader.size
+    print(f"Load {total_size} bytes:", flush=True)
 
-    # If an offset was not provided, we use the end of the program
-    if load_offset is None:
-        load_offset = max(min_free_address, min_offset)
-    load_end = load_offset + data_size
-    if load_offset < min_free_address:
-        raise RemoteError("The offset is incorrect. It must be at least "
-            f"0x{min_free_address:08x} (end of the program).")
-    if load_offset < min_offset:
-        raise RemoteError("The offset is incorrect. It must be at least "
-            f"0x{min_offset:08x} (end of the new program).")
-    if load_end > max_free_address:
-        raise RemoteError("The file is too large; there is not enough reusable space. " +
-            f"The reusable space is {max_free_address - min_free_address} bytes, beginning at offset " +
-            f"0x{min_free_address:08x} (end of the program). The file size is {data_size} bytes.")
-    if load_offset & mask:
-        raise RemoteError("The offset is incorrect. It must be aligned with the Flash "
-            f"sector size 0x{block_size:08x}.")
-
-    # For the benefit of an OTA update, where would we copy from/to?
-    copy_from_offset = load_offset
-    (copy_to_offset, _) = pico_info.flash_program_range
-
-    # Load file and pad
-    data = filename.read_bytes()[:data_size]
-    data += get_pad_bytes(len(data), block_size, b"\xff")
-    data_size = len(data)
-    print(f"Load {data_size} bytes:", flush=True)
-
-    # Upload
-    write_offset = 0
-    while write_offset < data_size:
+    # Upload blocks
+    copied_size = 0
+    for (flash_offset, data) in file_reader.get_blocks():
         try:
             (result_data, result_value) = await client.run(ID_FLASH_WRITE_HANDLER,
-                request_data=data[write_offset : write_offset + block_size],
-                parameter=write_offset + load_offset)
+                request_data=data, parameter=flash_offset)
         except BadHandlerError:
             raise NeedsMoreRemoteFeaturesError("ota" if ota_mode else "load") from None
         if result_value == PICO_ERROR_NOT_PERMITTED:
@@ -1204,14 +1408,14 @@ async def do_load(client: Client, filename: Path,
             # Other error codes should not be seen, because the required validation
             # has already been done by the Python code in this function.
             raise PicoError(result_value)
-        write_offset += block_size
-        percent = (write_offset * 100.0) / data_size
+        copied_size += len(data)
+        percent = (copied_size * 100.0) / total_size
         print(f"\r {percent:1.0f}%", end="", flush=True)
 
-    print(f"\rLoad ok, offset 0x{load_offset:08x}", flush=True)
+    print(f"\rLoad ok, offset 0x{file_reader.lower_bound:08x}", flush=True)
 
     # Returned for the benefit of an OTA update
-    return (copy_from_offset, copy_to_offset, data)
+    return (copy_to_offset, file_reader)
 
 
 def subcommand_load(args: argparse.Namespace) -> None:
@@ -1242,19 +1446,21 @@ def subcommand_ota(args: argparse.Namespace) -> None:
             client = Client(update_secret, reader, writer)
 
             # Load the data into Flash
-            (copy_from_offset, copy_to_offset, data) = await do_load(client, args.filename, None, True)
+            (copy_to_offset, file_reader) = await do_load(client, args.filename, None, True)
 
             # Verify on the Pico, then install
             ota_firmware_update_parameter_data = OTA_FIRMWARE_UPDATE_PARAMETER.pack(
-                    copy_from_offset, len(data),
-                    copy_to_offset, len(data)) + hashlib.sha256(data).digest()
+                    file_reader.lower_bound, file_reader.size,
+                    copy_to_offset, file_reader.size) + file_reader.get_sha256()
             (result_data, result_value) = await client.run(ID_OTA_FIRMWARE_UPDATE_HANDLER,
                 request_data=ota_firmware_update_parameter_data)
     
             if result_value != 0:
                 # Verification failed on the Pico
                 raise PicoError(result_value)
-            print("Verify ok - install command was accepted")
+            print("Verify ok - install command accepted: "
+                  f"0x{file_reader.lower_bound:08x} .. 0x{file_reader.upper_bound:08x} -> "
+                  f"0x{copy_to_offset:08x} .. 0x{copy_to_offset + file_reader.size:08x}")
 
         finally:
             try:
@@ -1374,8 +1580,8 @@ def main() -> None:
     parser_load = subparser.add_parser("load", help="Load Flash memory from a file [*]")
     parser_load.add_argument("-o", "--offset",
             metavar="FLASH", type=lambda s: int(s, 0),
-            help="Load offset. This is a physical address in Flash, "
-                "i.e. address 0 is the start of Flash.", required=True)
+            help="Load offset for binary files. This is a physical address in Flash, "
+                "i.e. address 0 is the start of Flash.")
     add_firmware_file_argument(parser_load)
     parser_load.set_defaults(func=subcommand_load)
 

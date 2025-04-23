@@ -12,6 +12,7 @@
 #include "wifi_settings.h"
 #include "wifi_settings/wifi_settings_configuration.h"
 #include "wifi_settings/wifi_settings_remote.h"
+#include "wifi_settings/wifi_settings_remote_handlers.h"
 #include "wifi_settings/wifi_settings_remote_memory_access_handlers.h"
 #include "wifi_settings/wifi_settings_flash_storage.h"
 
@@ -240,6 +241,10 @@ int32_t wifi_settings_ota_firmware_update_handler1(
     || (input_parameter != 0)) {
         return PICO_ERROR_INVALID_ARG;
     }
+    // Check if it is possible to lock out the other core (if any)
+    if (!wifi_settings_can_lock_out()) {
+        return PICO_ERROR_NOT_PERMITTED;
+    }
     // Check that all of the ROM functions needed for the firmware update are available
     ota_firmware_update_funcs_t funcs;
     if (!setup_ota_firmware_update_funcs(&funcs)) {
@@ -301,7 +306,6 @@ int32_t wifi_settings_ota_firmware_update_handler1(
     if (memcmp(digest_data, parameter.hash, WIFI_SETTINGS_OTA_HASH_SIZE) != 0) {
         return PICO_ERROR_MODIFIED_DATA;
     }
-
     return 0;
 }
 
@@ -315,7 +319,7 @@ void wifi_settings_ota_firmware_update_handler2(
 
     // update was previously verified by handler1
     if (callback1_parameter != 0) {
-        return;
+        return; // should be unreachable (checked by handler1)
     }
 
     // load parameters (verified now)
@@ -325,14 +329,13 @@ void wifi_settings_ota_firmware_update_handler2(
     // load references to ROM functions
     ota_firmware_update_funcs_t funcs;
     if (!setup_ota_firmware_update_funcs(&funcs)) {
-        return;
+        return; // should be unreachable (checked by handler1)
     }
 
     // Going dark...
-    save_and_disable_interrupts(); // Stop core 0 responding
-#if LIB_PICO_MULTICORE
-    multicore_reset_core1(); // Stop core 1
-#endif
+    if (!wifi_settings_do_lock_out()) {
+        return;
+    }
 
     // Watchdog functions are in Flash, so we can't call them as soon as we start erasing.
     // Solution is to enable the watchdog with a large timeout (1 second) and then reset

@@ -215,9 +215,66 @@ int32_t wifi_settings_update_handler(
     return (int32_t) input_data_size;
 }
 
+bool wifi_settings_can_lock_out() {
+#if LIB_PICO_MULTICORE
+    flash_safety_helper_t *helper = get_flash_safety_helper();
+    if (!helper) {
+        // Lock out is still possible, if we are running on core 0.
+        return (get_core_num() == 0);
+    } else {
+        // Lock out is possible with the Flash safety helper
+        return true;
+    }
+#else
+    // Only one core to lock out
+    return true;
+#endif
+}
+
+bool wifi_settings_do_lock_out() {
+#if LIB_PICO_MULTICORE
+    flash_safety_helper_t *helper = get_flash_safety_helper();
+    if (!helper) {
+        if (get_core_num() != 0) {
+            return false; // should be unreachable (checked by handler1)
+        }
+        // Fallback - if we can't use the Flash safety helper, we can still 
+        // lock out the other core as follows:
+        save_and_disable_interrupts(); // Stop core 0 responding
+        multicore_reset_core1(); // Stop the other core
+    } else {
+        if (helper->enter_safe_zone_timeout_ms(10000)) {
+            return false; // Unable to lock out the other core
+        }
+        save_and_disable_interrupts();
+    }
+#else
+    // Only one core to lock out
+    save_and_disable_interrupts();
+#endif
+    return true;
+}
+
+// For ID_UPDATE_REBOOT_HANDLER (first stage)
+int32_t wifi_settings_update_reboot_handler1(
+        uint8_t msg_type,
+        uint8_t* data_buffer,
+        uint32_t input_data_size,
+        int32_t input_parameter,
+        uint32_t* output_data_size,
+        void* arg) {
+
+    if (input_data_size != 0) {
+        // update requested - we will need to call wifi_settings_do_lock_out()
+        if (!wifi_settings_can_lock_out()) {
+            // It won't be possible to lock out the other core
+            return PICO_ERROR_NOT_PERMITTED;
+        }
+    }
+    return 0;
+}
+
 // For ID_UPDATE_REBOOT_HANDLER (second stage)
-// No first stage is required here, as the input is always valid; not providing a first stage
-// will just cause the user-provided input_data_size and input_parameter to be passed through.
 void wifi_settings_update_reboot_handler2(
         uint8_t msg_type,
         uint8_t* data_buffer,
@@ -225,12 +282,12 @@ void wifi_settings_update_reboot_handler2(
         int32_t callback1_parameter,
         void* arg) {
 
-    save_and_disable_interrupts(); // Stop core 0 responding
-#if LIB_PICO_MULTICORE
-    multicore_reset_core1(); // Stop core 1
-#endif
-
     if (callback1_data_size != 0) {
+        if (!wifi_settings_do_lock_out()) {
+            // abandon reboot: can't lock out
+            return;
+        }
+
         // update
         wifi_settings_update_flash_unsafe((const char*) data_buffer, (uint) callback1_data_size);
     }
@@ -243,3 +300,4 @@ void wifi_settings_update_reboot_handler2(
     watchdog_enable(1, 1);  // Watchdog triggered in 1ms
     while(1) {} // Wait for watchdog reset
 }
+

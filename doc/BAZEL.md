@@ -117,7 +117,7 @@ Add the following lines to your `MODULE.bazel` file:
 
     git_override(
         module_name = "pico-wifi-settings",
-        tag = "v0.1.2", # <-- use the version of the most recent release
+        tag = "v0.1.3", # <-- use the version of the most recent release
         remote = "https://github.com/jwhitham/pico-wifi-settings.git",
     )
 ```
@@ -226,10 +226,12 @@ handling remote updates.
 
 ## OTA updates for Bazel projects
 
-The `remote_picotool` program currently only supports firmware in `.bin` format
-and the Bazel toolchain only produces `.elf` or `.uf2` format files. To convert
-`.elf` to `.bin`, use
+The Bazel toolchain natively produces `.elf` files, but `.uf2` can be
+enabled with the parameters:
 ```
-    arm-none-eabi-objcopy -O binary <.elf file> <.bin file>
+    bazel build ... \
+      --aspects @pico-sdk//tools:uf2_aspect.bzl%pico_uf2_aspect \
+      --output_groups=+pico_uf2_files \
+      ...
 ```
-The `.bin` file can be used with `remote_picotool ota`.
+`.uf2` files can be used with `remote_picotool ota`.

@@ -1,8 +1,8 @@
 # pico-wifi-settings
 
-This [Raspberry Pi Pico
+This library for [Raspberry Pi Pico
 W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html)
-library manages WiFi connections for your Pico application. It provides:
+manages WiFi connections for your Pico application. It provides:
  - [Flash storage for WiFi passwords and hotspot names](doc/SETTINGS_FILE.md) ("SSIDs"),
  - a background `async_context` service to automatically connect to them,
  - an optional [remote update service](doc/REMOTE.md), secured with AES-256, which allows
@@ -100,8 +100,9 @@ lines of C code, or the more complex [setup application](doc/SETUP_APP.md)
 
 # Where this came from
 
-[I am a software engineer with embedded systems experience](https://www.jwhitham.org/).
-I developed two personal projects using Pico W with WiFi and in both cases I found
+
+[I am a software engineer](https://www.jwhitham.org/) and electronics hobbyist and
+I developed two personal projects using Pico W with WiFi. In both cases I found
 a need to store a list of hotspots and passwords. I made a command-line interface
 for WiFi setup which could be accessed via USB, and reused it in both projects. But
 the implementations diverged and became harder to maintain, and it wasn't easy to
@@ -111,3 +112,4 @@ with all of the features I wanted. This is it!
 For more information about the development of pico-wifi-settings,
 [see this short article](https://www.jwhitham.org/2025/03/pico-wifi-settings.html).
 You can also read about [implementation details in this document](doc/IMPLEMENTATION.md).
+And the [CHANGELOG](CHANGELOG.md) is the development history, starting at version 0.1.1.

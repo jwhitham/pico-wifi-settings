@@ -14,7 +14,8 @@ This requires the following:
     - You need to install the `pyaes` Python module: 
       `pip install pyaes` or `apt install python3-pyaes`
     - Python version >= 3.10 is recommended 
- - The Pico must be powered on and connected to the same WiFi network
+ - The Pico must be powered on!
+ - The Pico should be connected to the same WiFi network
    as the PC or server that will send the update.
 
 # CMake flags
@@ -146,9 +147,9 @@ are as follows:
 Provided that all of these requirements are met, an OTA update can be started by
 running:
 ```
-    python remote_picotool --secret hunter2 ota newfirmwarefile.bin
+    python remote_picotool --secret hunter2 ota newfirmwarefile.uf2
 ```
-The new firmware file must be in the .bin format (not .uf2 or .elf).
+The new firmware file must be in the `.bin` or `.uf2` format.
 
 The firmware is uploaded and stored temporarily in Flash, at an address outside of the
 existing program. This is necessary because the Pico's RAM is too small to store most

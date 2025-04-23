@@ -35,6 +35,15 @@ int32_t wifi_settings_update_handler(
         uint32_t* output_data_size,
         void* arg);
 
+/// @brief for ID_UPDATE_REBOOT_HANDLER (first stage)
+int32_t wifi_settings_update_reboot_handler1(
+        uint8_t msg_type,
+        uint8_t* data_buffer,
+        uint32_t input_data_size,
+        int32_t input_parameter,
+        uint32_t* output_data_size,
+        void* arg);
+
 /// @brief for ID_UPDATE_REBOOT_HANDLER (second stage)
 void wifi_settings_update_reboot_handler2(
         uint8_t msg_type,
@@ -42,5 +51,8 @@ void wifi_settings_update_reboot_handler2(
         uint32_t input_data_size,
         int32_t input_parameter,
         void* arg);
+
+bool wifi_settings_can_lock_out();
+bool wifi_settings_do_lock_out();
 
 #endif

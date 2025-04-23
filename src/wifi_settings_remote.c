@@ -904,7 +904,7 @@ int wifi_settings_remote_init() {
             wifi_settings_update_handler, NULL);
     wifi_settings_remote_set_two_stage_handler(
             ID_UPDATE_REBOOT_HANDLER,
-            NULL,
+            wifi_settings_update_reboot_handler1,
             wifi_settings_update_reboot_handler2, NULL);
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
     wifi_settings_remote_set_handler(ID_READ_HANDLER,

@@ -8,7 +8,6 @@
 
 #include "activity_edit_hotspots.h"
 #include "activity_scan_for_a_hotspot.h"
-#include "activity_force_disconnect_reconnect.h"
 #include "user_interface.h"
 #include "file_operations.h"
 #include "wifi_slots.h"
@@ -144,7 +143,8 @@ void activity_edit_hotspots() {
         wifi_slots_save(&fh, &slot_data);
         if (ui_file_save(&fh)) {
             // reconnect
-            activity_force_disconnect_reconnect();
+            wifi_settings_disconnect();
+            wifi_settings_connect();
         }
     }
 }

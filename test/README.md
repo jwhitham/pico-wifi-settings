@@ -7,7 +7,7 @@ These tests should be executed with pytest:
 They've only been used on Linux. They require at least:
 
  - Recent Python 3.x version (recommend 3.10)
- - `pytest`, `pyaes` and `mypy` Python modules installed
+ - `pytest`, `pytest-asyncio`, `pyaes` and `mypy` Python modules installed
  - Pico SDK, either installed as `pico-sdk` in the directory above the root,
    or in the `$PICO_SDK_PATH` directory.
  - Pico SDK is able to build applications that use WiFi.
