@@ -8,7 +8,7 @@
 
 #include "file_operations.h"
 #include "wifi_settings/wifi_settings_flash_range.h"
-#include "wifi_settings/wifi_settings_flash_storage.h"
+#include "wifi_settings/wifi_settings_flash_storage_update.h"
 
 #include <string.h>
 

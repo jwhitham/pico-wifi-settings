@@ -18,6 +18,7 @@ extern "C" {
 #include "wifi_settings/wifi_settings_hostname.h"
 #ifdef ENABLE_REMOTE_UPDATE
 #include "wifi_settings/wifi_settings_remote.h"
+#include "wifi_settings/wifi_settings_flash_storage_update.h"
 #endif
 
 #ifdef __cplusplus

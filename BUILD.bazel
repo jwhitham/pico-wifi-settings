@@ -22,11 +22,13 @@ cc_library(
         "//bazel/constraint:enable_remote_update_only": [
             "src/wifi_settings_remote.c",
             "src/wifi_settings_remote_handlers.c",
+            "src/wifi_settings_flash_storage_update.c",
         ],
         "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
             "src/wifi_settings_remote.c",
             "src/wifi_settings_remote_handlers.c",
             "src/wifi_settings_remote_memory_access_handlers.c",
+            "src/wifi_settings_flash_storage_update.c",
         ],
         "//conditions:default": [],
     }),
@@ -42,11 +44,13 @@ cc_library(
         "//bazel/constraint:enable_remote_update_only": [
             "include/wifi_settings/wifi_settings_remote.h",
             "include/wifi_settings/wifi_settings_remote_handlers.h",
+            "include/wifi_settings/wifi_settings_flash_storage_update.h",
         ],
         "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
             "include/wifi_settings/wifi_settings_remote.h",
             "include/wifi_settings/wifi_settings_remote_handlers.h",
             "include/wifi_settings/wifi_settings_remote_memory_access_handlers.h",
+            "include/wifi_settings/wifi_settings_flash_storage_update.h",
         ],
         "//conditions:default": [],
     }),
@@ -72,8 +76,6 @@ cc_library(
     }),
     deps = [
         "@pico-sdk//src/common/pico_sync",
-        "@pico-sdk//src/rp2_common/hardware_flash",
-        "@pico-sdk//src/rp2_common/pico_flash",
         "@pico-sdk//src/rp2_common/pico_cyw43_arch",
         "@pico-sdk//src/rp2_common/pico_stdlib",
         "@pico-sdk//src/rp2_common/pico_unique_id",
@@ -82,9 +84,13 @@ cc_library(
         # mbedtls library: see note in /MODULE.bazel
         "//bazel/constraint:enable_remote_update_only": [
             "@mbedtls_aes_sha256",
+            "@pico-sdk//src/rp2_common/hardware_flash",
+            "@pico-sdk//src/rp2_common/pico_flash",
         ],
         "//bazel/constraint:enable_remote_update_and_remote_memory_access": [
             "@mbedtls_aes_sha256",
+            "@pico-sdk//src/rp2_common/hardware_flash",
+            "@pico-sdk//src/rp2_common/pico_flash",
         ],
         "//conditions:default": [],
     })

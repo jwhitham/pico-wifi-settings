@@ -61,6 +61,33 @@ def do_build(src_dir: str, target_file: typing.Optional[Path],
 
     return size
 
+def estimate_sizes(target_path: Path) -> None:
+    # Estimated size impact of wifi-settings
+    sizes: typing.Dict[typing.Any, int] = {}
+    for (test_mode, remote_level) in [
+            ("basic", 0),
+            ("wifi_settings", 0),
+            ("wifi_settings", 1),
+            ("wifi_settings", 2),
+            ("no_wifi", 0),
+            ("basic_with_mbedtls", 0),
+    ]:
+        board = BOARDS[-1]
+        key = f"{test_mode}_{remote_level}"
+        sizes[key] = do_build(
+            src_dir="test/size",
+            target_file=None,
+            elf_file=target_path / f"size_test_{key}.elf",
+            cmake_args=[f"-DPICO_BOARD={board}",
+                        f"-DWIFI_SETTINGS_REMOTE={remote_level}",
+                        f"-DTEST_MODE={test_mode}"])
+
+    sizes["wifi_size"] = sizes["basic_0"] - sizes["no_wifi_0"]
+    sizes["min_size"] = sizes["wifi_settings_0"] - sizes["basic_0"]
+    sizes["mid_size"] = sizes["wifi_settings_2"] - sizes["basic_with_mbedtls_0"]
+    sizes["max_size"] = sizes["wifi_settings_2"] - sizes["basic_0"]
+    (target_path / "sizes.json").write_text(json.dumps(sizes, indent=4))
+
 def main() -> None:
     # Check consistency of working directory
     check = subprocess.run(["git", "status"],
@@ -127,31 +154,6 @@ def main() -> None:
         "-o", str(target_path / f"pico-wifi-settings-{version}.tar.gz"),
     ], cwd=PICO_WIFI_SETTINGS_ROOT_PATH)
 
-    # Estimated size impact of wifi-settings
-    sizes: typing.Dict[typing.Any, int] = {}
-    for (test_mode, remote_level) in [
-            ("basic", 0),
-            ("wifi_settings", 0),
-            ("wifi_settings", 1),
-            ("wifi_settings", 2),
-            ("no_wifi", 0),
-            ("basic_with_mbedtls", 0),
-    ]:
-        board = BOARDS[-1]
-        key = f"{test_mode}_{remote_level}"
-        sizes[key] = do_build(
-            src_dir="test/size",
-            target_file=None,
-            elf_file=target_path / f"size_test_{key}.elf",
-            cmake_args=[f"-DPICO_BOARD={board}",
-                        f"-DWIFI_SETTINGS_REMOTE={remote_level}",
-                        f"-DTEST_MODE={test_mode}"])
-
-    sizes["wifi_size"] = sizes["basic_0"] - sizes["no_wifi_0"]
-    sizes["min_size"] = sizes["wifi_settings_0"] - sizes["basic_0"]
-    sizes["mid_size"] = sizes["wifi_settings_2"] - sizes["basic_with_mbedtls_0"]
-    sizes["max_size"] = sizes["wifi_settings_2"] - sizes["basic_0"]
-    (target_path / "sizes.json").write_text(json.dumps(sizes, indent=4))
 
     # Begin compiling stuff - here is the setup app
     for board in BOARDS:
@@ -160,16 +162,18 @@ def main() -> None:
             target_file=setup_uf2_target_path / f"setup_app__{board}__{version}.uf2",
             elf_file=target_path / f"setup_app__{board}__{version}.elf",
             cmake_args=[f"-DPICO_BOARD={board}",
-                        f"-DWIFI_SETTINGS_REMOTE=2",
+                        "-DWIFI_SETTINGS_REMOTE=2",
                         f"-DSETUP_GIT_COMMIT={git_commit}"])
 
     # Build the example (to check it builds)
-    for board in BOARDS:
-        do_build(
-            src_dir="example",
-            target_file=None,
-            elf_file=target_path / f"example__{board}__{version}.elf",
-            cmake_args=[f"-DPICO_BOARD={board}"])
+    for remote in range(2):
+        for board in BOARDS:
+            do_build(
+                src_dir="example",
+                target_file=None,
+                elf_file=target_path / f"example__{board}__{version}__{remote}.elf",
+                cmake_args=[f"-DPICO_BOARD={board}"] +
+                    ([] if remote else ["-DWIFI_SETTINGS_REMOTE=0"]))
 
     # Testing
     subprocess.check_call([

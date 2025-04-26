@@ -30,6 +30,13 @@ add_executable(test_wifi_settings_flash_storage
 add_test(test_wifi_settings_flash_storage
         test_wifi_settings_flash_storage
     )
+add_executable(test_wifi_settings_flash_storage_update
+        ${CMAKE_CURRENT_LIST_DIR}/test_wifi_settings_flash_storage_update.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../src/wifi_settings_flash_storage_update.c
+    )
+add_test(test_wifi_settings_flash_storage_update
+        test_wifi_settings_flash_storage_update
+    )
 add_executable(test_wifi_settings_connect
         ${CMAKE_CURRENT_LIST_DIR}/test_wifi_settings_connect.c
         ${CMAKE_CURRENT_LIST_DIR}/../../src/wifi_settings_connect.c

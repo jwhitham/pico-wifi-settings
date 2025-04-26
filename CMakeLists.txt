@@ -88,12 +88,11 @@ if (WIFI_SETTINGS_REMOTE GREATER 0)
     )
     target_sources(wifi_settings INTERFACE
         ${CMAKE_CURRENT_LIST_DIR}/src/wifi_settings_remote.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/wifi_settings_remote_handlers.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/wifi_settings_flash_storage_update.c
     )
     target_link_libraries(wifi_settings INTERFACE
         pico_mbedtls
-    )
-    target_sources(wifi_settings INTERFACE
-        ${CMAKE_CURRENT_LIST_DIR}/src/wifi_settings_remote_handlers.c
     )
 else()
     message("wifi_settings: remote update feature is disabled")

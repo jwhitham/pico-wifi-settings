@@ -527,7 +527,11 @@ void wifi_settings_deinit() {
 void wifi_settings_connect() {
     if (g_wifi_state.cstate == DISCONNECTED) {
         // Try to connect when periodic worker is next called
-        g_wifi_state.cstate = TRY_TO_CONNECT;
+        cyw43_arch_lwip_begin();
+        if (g_wifi_state.cstate == DISCONNECTED) {
+            g_wifi_state.cstate = TRY_TO_CONNECT;
+        }
+        cyw43_arch_lwip_end();
     }
 }
 
@@ -535,9 +539,11 @@ void wifi_settings_disconnect() {
     // Immediate disconnect
     if ((g_wifi_state.cstate != UNINITIALISED)
     && (g_wifi_state.cstate != INITIALISATION_ERROR)) {
+        cyw43_arch_lwip_begin();
         ensure_disconnected();
         g_wifi_state.cstate = DISCONNECTED;
         g_wifi_state.selected_ssid_index = 0;
+        cyw43_arch_lwip_end();
     }
 }
 
