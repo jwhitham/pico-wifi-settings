@@ -2,6 +2,10 @@
 
 This documents important changes in the project.
 
+## v0.1.4
+
+- Create subset library, wifi\_settings\_connect.
+
 ## v0.1.3
 
 - Add UF2 support to remote\_picotool for the `load` and `ota` commands

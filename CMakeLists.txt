@@ -36,7 +36,7 @@ if ((NOT TARGET pico_mbedtls) AND (WIFI_SETTINGS_REMOTE GREATER 0))
 endif()
 
 message("wifi_settings: library is available.")
-set(WIFI_SETTINGS_VERSION_STRING "0.1.3")
+set(WIFI_SETTINGS_VERSION_STRING "0.1.4")
 set(WIFI_SETTINGS_PROJECT_URL "https://github.com/jwhitham/pico-wifi-settings")
 
 

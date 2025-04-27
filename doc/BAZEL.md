@@ -117,7 +117,7 @@ Add the following lines to your `MODULE.bazel` file:
 
     git_override(
         module_name = "pico-wifi-settings",
-        tag = "v0.1.3", # <-- use the version of the most recent release
+        tag = "v0.1.4", # <-- use the version of the most recent release
         remote = "https://github.com/jwhitham/pico-wifi-settings.git",
     )
 ```
