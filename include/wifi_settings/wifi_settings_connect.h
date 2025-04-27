@@ -6,8 +6,6 @@
  * This header file declares functions used to initialise and connect to WiFi
  * with pico-wifi-settings.
  *
- * You would normally only need to include "wifi_settings.h" in your application.
- *
  */
 
 #ifndef _WIFI_SETTINGS_CONNECT_H_

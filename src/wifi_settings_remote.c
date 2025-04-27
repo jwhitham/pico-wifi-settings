@@ -7,7 +7,6 @@
  */
 
 
-#include "wifi_settings.h"
 #include "wifi_settings/wifi_settings_remote.h"
 #include "wifi_settings/wifi_settings_remote_handlers.h"
 #include "wifi_settings/wifi_settings_flash_storage.h"

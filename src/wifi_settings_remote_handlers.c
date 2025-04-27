@@ -8,11 +8,11 @@
  * building with cmake -DWIFI_SETTINGS_REMOTE=1 or -DWIFI_SETTINGS_REMOTE=2.
  */
 
-#include "wifi_settings.h"
 #include "wifi_settings/wifi_settings_configuration.h"
 #include "wifi_settings/wifi_settings_remote.h"
 #include "wifi_settings/wifi_settings_remote_handlers.h"
 #include "wifi_settings/wifi_settings_flash_range.h"
+#include "wifi_settings/wifi_settings_flash_storage_update.h"
 
 #include "hardware/flash.h"
 #include "hardware/structs/sysinfo.h"

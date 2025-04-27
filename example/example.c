@@ -3,13 +3,17 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
- * Example for pico-wifi-settings.
+ * Example for wifi-settings.
  *
- * This example connects to WiFi and broadcasts a message on UDP port 1234
- * every second. Receive these with any tool that can receive
+ * This example connects to WiFi using wifi_settings_connect functions,
+ * and then broadcasts a message on UDP port 1234 every second.
+ * You can receive these with any tool that can receive
  * UDP, e.g. tcpdump, Wireshark, or netcat:
  *
  *   nc -l -u -p 1234
+ *
+ * The WiFi connection details must be configured in Flash as described here:
+ * https://github.com/jwhitham/pico-wifi-settings/blob/master/doc/SETTINGS_FILE.md
  */
 
 
@@ -23,7 +27,8 @@
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
 
-#include "wifi_settings.h"
+#include "wifi_settings/wifi_settings_connect.h"
+#include "wifi_settings/wifi_settings_hostname.h"
 
 
 bool send_udp_packet(uint count) {
@@ -90,8 +95,9 @@ int main() {
         printf("%s\n\n", text);
         if (wifi_settings_has_no_wifi_details()) {
             // Help the user if no SSIDs are configured
-            printf("You need to configure at least one hotspot!\n"
-                   "See README.md, 'Creating and updating a WiFi settings file' for instructions\n\n");
+            printf("You need to configure at least one hotspot! See\n"
+                   "https://github.com/jwhitham/pico-wifi-settings/blob/master/doc/SETTINGS_FILE.md\n"
+                   "for instructions.\n\n");
         } else {
             wifi_settings_get_hw_status_text(text, sizeof(text));
             printf("%s\n", text);
