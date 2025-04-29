@@ -149,7 +149,7 @@ void activity_scan_for_a_hotspot() {
         // Load SSIDs from the file
         wifi_slots_load(&fh, &slot_data);
 
-        if (slot_data.num_items >= NUM_SSIDS) {
+        if (slot_data.num_items >= MAX_NUM_SSIDS) {
             // File is full! Strictly speaking, if the file is full, the user could pick an existing ssid and update
             // the password, but it seems more helpful to tell the user that the file is full before scanning.
             printf("Unable to search.\n"
@@ -157,7 +157,7 @@ void activity_scan_for_a_hotspot() {
                    "are all defined.\n"
                    "You need to delete one of the existing SSIDs in order to add another.\n"
                    "Use 'View and edit known hotspots' to delete a record.\n\n",
-                   (int) NUM_SSIDS);
+                   (int) MAX_NUM_SSIDS);
             ui_wait_for_the_user();
             return;
         }
@@ -239,7 +239,10 @@ void activity_scan_for_a_hotspot() {
 
     // Add to the file
     wifi_slots_renumber(&slot_data);
-    wifi_slots_save(&fh, &slot_data);
+    if (!wifi_slots_save(&fh, &slot_data)) {
+        ui_file_full_error();
+        return;
+    }
     if (ui_file_save(&fh)) {
         // reconnect after adding the new hotspot
         wifi_settings_connect();

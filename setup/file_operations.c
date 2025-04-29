@@ -39,7 +39,7 @@ static bool is_end_of_line_char(char value) {
 
 static int get_file_size(const file_handle_t* fh) {
     int index;
-    for (index = 0; index < WIFI_SETTINGS_FILE_SIZE; index++) {
+    for (index = 0; index < (int) WIFI_SETTINGS_FILE_SIZE; index++) {
         if (is_end_of_file_char(fh->contents[index])) {
             break;
         }
@@ -61,7 +61,7 @@ static bool find_next_key(const file_handle_t* fh, find_index_result_t* fir) {
                 return false; // Reached EOF without finding any key
             }
             index++;
-            if (index >= WIFI_SETTINGS_FILE_SIZE) {
+            if (index >= (int) WIFI_SETTINGS_FILE_SIZE) {
                 return false; // Reached EOF without finding any key
             }
         }
@@ -69,7 +69,7 @@ static bool find_next_key(const file_handle_t* fh, find_index_result_t* fir) {
         fir->key_index = index;
         while ((fh->contents[index] != '=') && (!is_end_of_line_char(fh->contents[index]))) {
             index++;
-            if (index >= WIFI_SETTINGS_FILE_SIZE) {
+            if (index >= (int) WIFI_SETTINGS_FILE_SIZE) {
                 return false; // Reached EOF without finding any key
             }
         }
@@ -80,7 +80,7 @@ static bool find_next_key(const file_handle_t* fh, find_index_result_t* fir) {
             // Some key=value was found on this line
             index++;
             fir->value_index = index;
-            while ((index < WIFI_SETTINGS_FILE_SIZE) && (!is_end_of_line_char(fh->contents[index]))) {
+            while ((index < (int) WIFI_SETTINGS_FILE_SIZE) && (!is_end_of_line_char(fh->contents[index]))) {
                 index++;
             }
             fir->end_index = index;
@@ -92,7 +92,7 @@ static bool find_next_key(const file_handle_t* fh, find_index_result_t* fir) {
         // Handle the special case by skipping to the end of the line
         while (!is_end_of_line_char(fh->contents[index])) {
             index++;
-            if (index >= WIFI_SETTINGS_FILE_SIZE) {
+            if (index >= (int) WIFI_SETTINGS_FILE_SIZE) {
                 return false; // Reached EOF without finding any key
             }
         }
@@ -151,7 +151,7 @@ static bool create_gap(
     if ((replace_index + remove_size) > current_file_size) {
         return false; // error - the section to be removed goes beyond the end of the file
     }
-    if (new_file_size > WIFI_SETTINGS_FILE_SIZE) {
+    if (new_file_size > (int) WIFI_SETTINGS_FILE_SIZE) {
         return false; // error - the section to be inserted goes beyond the end of the file
     }
 
@@ -174,7 +174,7 @@ static bool create_gap(
 
 /// @brief Include any line ending characters within end_index
 static void include_line_ending(const file_handle_t* fh, find_index_result_t* fir) {
-    while ((fir->end_index < WIFI_SETTINGS_FILE_SIZE)
+    while ((fir->end_index < (int) WIFI_SETTINGS_FILE_SIZE)
     && !is_end_of_file_char(fh->contents[fir->end_index])
     && is_end_of_line_char(fh->contents[fir->end_index])) {
         fir->end_index++;
@@ -221,8 +221,14 @@ bool file_set(file_handle_t* fh, const char* key, const char* value) {
         // Key found. Also remove line ending characters after the key
         include_line_ending(fh, &fir);
     } else {
-        // Key does not exist - put it at the end of the file
-        fir.key_index = fir.value_index = fir.end_index = get_file_size(fh);
+        // Key does not exist - put it after the final end of line character in the file
+        // (The last line in the file might be incomplete, so insert at the beginning
+        // of that line, rather than appending to whatever is already there.)
+        int place_index = get_file_size(fh);
+        while ((place_index > 0) && !is_end_of_line_char(fh->contents[place_index - 1])) {
+            place_index--;
+        }
+        fir.key_index = fir.value_index = fir.end_index = place_index;
     }
     const int replace_index = fir.key_index;
     const int remove_size = fir.end_index - fir.key_index;
@@ -275,7 +281,7 @@ int file_get_next_key_value(
 
     if (!find_next_key(fh, &fir)) {
         // There are no more keys
-        *search_index = WIFI_SETTINGS_FILE_SIZE;
+        *search_index = (int) WIFI_SETTINGS_FILE_SIZE;
         return -1;
     }
 

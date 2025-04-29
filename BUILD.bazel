@@ -9,7 +9,15 @@
 # Pico or Pico 2 applications. See /doc/BAZEL.md for instructions.
 #
 
+load("@pico-sdk//bazel/util:sdk_define.bzl", "pico_sdk_define")
+
 package(default_visibility = ["//visibility:public"])
+
+pico_sdk_define(
+    name = "WIFI_SETTINGS_FILE_ADDRESS",
+    define_name = "WIFI_SETTINGS_FILE_ADDRESS",
+    from_flag = "//bazel/config:WIFI_SETTINGS_FILE_ADDRESS",
+)
 
 cc_library(
     name = "pico-wifi-settings",
@@ -75,6 +83,7 @@ cc_library(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
+        ":WIFI_SETTINGS_FILE_ADDRESS",
         "@pico-sdk//src/common/pico_sync",
         "@pico-sdk//src/rp2_common/pico_cyw43_arch",
         "@pico-sdk//src/rp2_common/pico_stdlib",

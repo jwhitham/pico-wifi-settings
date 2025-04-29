@@ -53,7 +53,7 @@ static uint32_t calls_to_is_link_up;
 static uint32_t calls_to_cyw43_wifi_leave;
 static uint32_t calls_to_cyw43_wifi_scan_active;
 static uint32_t calls_to_netif_ip4_addr;
-static key_value_item_t key_value_items[100];
+static key_value_item_t key_value_items[MAX_NUM_SSIDS * 2];
 static bool cyw43_arch_lwip_lock = false;
 static char connected_ssid[WIFI_SSID_SIZE];
 static char connected_bssid[WIFI_BSSID_SIZE];
@@ -642,7 +642,7 @@ void test_wifi_storage_empty_state() {
 void reach_connecting_state() {
     // GIVEN the TRY_TO_CONNECT state with wifi hotspots
     reset_for_state_machine_test();
-    create_ssids(NUM_SSIDS);
+    create_ssids(MAX_NUM_SSIDS);
 
     // WHEN stepping through the state machine
     step_state_machine();
@@ -682,7 +682,7 @@ void reach_connecting_state() {
     scan_result.ssid_len = (uint8_t) strlen((char*)scan_result.ssid);
     scan_callback(NULL, &scan_result);
     // THEN no change in the SSID set - only 3 and 5 were found
-    for (uint i = 0; i <= NUM_SSIDS; i++) {
+    for (uint i = 0; i <= MAX_NUM_SSIDS; i++) {
         if ((i == 3) || (i == 5)) {
             ASSERT(g_wifi_state.ssid_scan_info[i] == FOUND);
         } else {
@@ -934,7 +934,7 @@ void test_wifi_connecting_state_when_lost() {
     ASSERT(calls_to_cyw43_wifi_scan_active == 2);
     ASSERT(g_wifi_state.cstate == TRY_TO_CONNECT);
     ASSERT(g_wifi_state.selected_ssid_index == 0);
-    for (uint i = 0; i <= NUM_SSIDS; i++) {
+    for (uint i = 0; i <= MAX_NUM_SSIDS; i++) {
         if ((i == 3) || (i == 5)) {
             ASSERT(g_wifi_state.ssid_scan_info[i] == FAILED);
         } else {
@@ -1101,7 +1101,7 @@ void test_wifi_connecting_with_multiple_passwords_for_ssid() {
     // defined many times in the configuration, with different passwords (user is
     // not sure which password is currently in use?)
     reset_for_state_machine_test();
-    for (uint i = 1; i <= NUM_SSIDS; i++) {
+    for (uint i = 1; i <= MAX_NUM_SSIDS; i++) {
         char key[20];
         char value[20];
 
@@ -1132,7 +1132,7 @@ void test_wifi_connecting_with_multiple_passwords_for_ssid() {
     ASSERT(g_wifi_state.selected_ssid_index == 1);
     ASSERT(g_wifi_state.ssid_scan_info[1] == ATTEMPT);
     ASSERT(strcmp(wifi_settings_get_ssid_status(1), "ATTEMPT") == 0);
-    for (uint i = 2; i <= NUM_SSIDS; i++) {
+    for (uint i = 2; i <= MAX_NUM_SSIDS; i++) {
         ASSERT(g_wifi_state.ssid_scan_info[i] == FOUND);
         ASSERT(strcmp(wifi_settings_get_ssid_status(i), "FOUND") == 0);
     }

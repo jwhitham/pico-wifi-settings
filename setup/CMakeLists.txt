@@ -35,11 +35,13 @@ add_executable(setup
         activity_ping.c
         activity_dns_test.c
         activity_telnet_test.c
+        activity_set_file_location.c
         dns_lookup.c
         edit_key_value.c
         user_interface.c
         file_operations.c
         wifi_slots.c
+        file_finder.c
     )
 target_include_directories(setup PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
@@ -62,6 +64,7 @@ target_compile_definitions(setup PRIVATE
     SETUP_GIT_COMMIT="${SETUP_GIT_COMMIT}"
 )
 
+pico_set_program_name(setup "pico-wifi-settings setup")
 pico_enable_stdio_usb(setup 1)
 pico_enable_stdio_uart(setup 0)
 

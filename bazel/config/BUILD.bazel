@@ -2,13 +2,20 @@ load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
 
 package(default_visibility = ["//visibility:public"])
 
-# WIFI_SETTINGS: WIFI_SETTINGS_REMOTE, Option to enable remote access to the WiFi settings file
+# WIFI_SETTINGS_REMOTE, Option to enable remote access to the WiFi settings file
 # Value 0 disables all remote access
 # Value 1 enables remote updates for the WiFi settings file and remote reboot
 # Value 2 enables remote access to memory (read and write) with over-the-air (OTA) firmware updates
 int_flag(
     name = "WIFI_SETTINGS_REMOTE",
     build_setting_default = 1,
+)
+
+# WIFI_SETTINGS_FILE_ADDRESS, Option to set the address for the wifi-settings file
+# Default is 16kb before the end of Flash
+int_flag(
+    name = "WIFI_SETTINGS_FILE_ADDRESS",
+    build_setting_default = 0,
 )
 
 # This is used in the setup app to show the Git commit

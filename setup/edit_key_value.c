@@ -83,7 +83,11 @@ bool edit_key_value(
         }
         if ((accept_callback == NULL) || accept_callback(key, value)) {
             // New value is acceptable
-            file_set(fh, key, value);
+            if (!file_set(fh, key, value)) {
+                ui_file_full_error();
+                return false;
+            }
+
             ui_file_save(fh);
             return true;
         }

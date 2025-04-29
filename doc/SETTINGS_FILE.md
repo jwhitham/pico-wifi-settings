@@ -46,7 +46,7 @@ STORAGE\_EMPTY\_ERROR state.
 
 You can also use the following:
 
- - `ssid<N>` - SSID name for hotspot N (a number from 1 to 16)
+ - `ssid<N>` - SSID name for hotspot N (a number from 1 to 100)
  - `pass<N>` - Password for hotspot N
  - `country` - Your two-letter country code from [ISO-3166-1](https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes)
  - `update_secret` - The shared secret for [remote updates](REMOTE.md)
@@ -63,25 +63,46 @@ You need to build picotool with USB support for your OS (or download a pre-built
 
 To use picotool,
 boot the Pico in bootloader mode by holding down the BOOTSEL button while plugging it
-into USB. In bootloader mode, you can upload files with picotool. The address has to
-be specified:
+into USB. In bootloader mode, you can upload files with picotool.
+The default address is 16kb before the final address in Flash:
 
- - On Pico W, use `0x101ff000` as the address.
- - On Pico 2 W, use `0x103fe000` as the address.
+ - On Pico W, use `0x101fc000` as the address.
+ - On Pico 2 W, use `0x103fc000` as the address.
 
 You must also rename your WiFi settings file so that it ends with `.bin` as 
 picotool is not able to upload files unless they are `.bin`, `.elf` or `.uf2`.
 
 Here is a sample upload command for Pico W (RP2040):
 ```
-    picotool load -o 0x101ff000 mywifisettings.bin
+    picotool load -o 0x101fc000 mywifisettings.bin
 ```
 and the equivalent for Pico 2 W (RP2350):
 ```
-    picotool load -o 0x103fe000 mywifisettings.bin
+    picotool load -o 0x103fc000 mywifisettings.bin
 ```
-Note that on Pico 2 W, the final block in Flash can't be safely
-used because of the workaround for bug RP2350-E10. The next-to-last block is used instead.
+
+## Location of the wifi-settings file
+
+The default location of the file (16kb before the final address in Flash)
+has been chosen because the final three 4kb pages of Flash are already assigned
+a function by the Pico SDK. The Bluetooth library uses two 4kb pages for storage of
+devices that have been paired by Bluetooth. The final 4kb page is used for a workaround
+for the RP2350-E10 bug - this page may be erased when copying a UF2 file to a Pico 2
+via drag-and-drop. Therefore, these three pages are avoided.
+
+If you wish to store the wifi-settings file at a specific address you can
+do so by setting `-DWIFI_SETTINGS_FILE_ADDRESS=0x....` when running cmake.
+The value `0x...` should be an address relative to the start of Flash.
+
+Versions of pico-wifi-settings before 0.2.0 used `0x1ff000` for Pico 1 and
+`0x3fe000` for Pico 2. If you used pico-wifi-settings before 0.2.0, then you can
+- build with `-DWIFI_SETTINGS_FILE_ADDRESS=0x1ff000` or `0x3fe000` to use the old address, or
+- use the [setup app](SETUP_APP.md) feature named
+  `Change wifi-settings file location` to move the file to the default location, or
+- use picotool to move the wifi-settings file to the default location, or
+- implement the `wifi_settings_range_get_wifi_settings_file()` function in your
+  application code to provide any Flash address you wish, including an address
+  computed dynamically in some way.
 
 # Copying the WiFi settings file by WiFi
 
@@ -95,14 +116,20 @@ for instructions.
 
 picotool can be used to download WiFi settings files from a Pico W:
 ```
-    picotool save -r 0x101ff000 0x10200000 backup.bin
+    picotool save -r 0x101fc000 0x101fd000 backup.bin
 ```
 and Pico 2 W (RP2350):
 ```
-    picotool save -r 0x103fe000 0x103ff000 backup.bin
+    picotool save -r 0x103fc000 0x103fd000 backup.bin
 ```
 Characters after the end of the file will be copied (usually either 0x00 or 0xff).
-These can be safely deleted using your text editor.
+These can be safely deleted using your text editor. The backup is restored by
+using `picotool load` as described in "Copying the WiFi settings file by USB".
+
+These examples use the default location for the wifi-settings file. If you
+are using a custom location, e.g. building with
+`-DWIFI_SETTINGS_FILE_ADDRESS=0x...`, then
+you would need to substitute the actual address.
 
 # File format details
 
@@ -141,7 +168,7 @@ doesn't understand, and skips any keys that are not known. Here are the rules:
  - `bssid<N>` should be specified as
    a `:`-separated lower-case MAC address, e.g. `01:23:45:67:89:ab`. BSSIDs are
    not normally required and should only be used if you have a special requirement
-   e.g. a "hidden" hotspot without am SSID name.
+   e.g. a "hidden" hotspot without an SSID name.
  - If the DHCP server on your LAN also acts as DNS, then the hostname specified with `name=`
    can be used with the `--address` option of remote\_picotool: this can
    be faster than searching for a board, and easier than using an IP address.

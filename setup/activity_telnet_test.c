@@ -27,7 +27,6 @@ static char g_telnet_port[6];
 #define SEND_BUFFER_SIZE        (SEND_BUFFER_MASK + 1)
 #define SEND_PACKET_MAX_SIZE    500
 #define FORCE_SEND_THRESHOLD    SEND_PACKET_MAX_SIZE
-#define CONTROL_ESC             0x1d // control+]
 
 typedef enum {
     NO_COMMAND, IAC_COMMAND,
@@ -342,8 +341,8 @@ void activity_telnet_test() {
         return;
     }
     while (!telnet_data.finish) {
-        const int ch = getchar_timeout_us(1000);
-        if (ch == CONTROL_ESC) {
+        const int ch = ui_getchar_timeout_us(1000);
+        if (ch == CONTROL_RIGHT_SQUARE_BRACKET) {
             // force disconnect
             break;
         }

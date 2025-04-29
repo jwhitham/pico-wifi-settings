@@ -20,6 +20,7 @@
 #include "pico/stdlib.h"
 
 #include <string.h>
+#include <limits.h>
 
 #ifndef UNIT_TEST
 static inline bool wifi_settings_flash_range_verify(
@@ -41,19 +42,20 @@ int wifi_settings_update_flash_unsafe(
     wifi_settings_range_get_wifi_settings_file(&fr);
 
     // Check that the new data will actually fit
-    if (file_size > fr.size) {
+    const uint max_file_size = fr.size;
+    if (file_size > max_file_size) {
         return PICO_ERROR_INVALID_ARG;
     }
 
     // Erase existing file in Flash
     uint32_t flags = save_and_disable_interrupts();
-    flash_range_erase(fr.start_address, fr.size);
+    flash_range_erase(fr.start_address, max_file_size);
     restore_interrupts(flags);
 
     // Store new copy
-    for (uint32_t offset = 0; offset < file_size; offset += FLASH_PAGE_SIZE) {
+    for (uint offset = 0; offset < file_size; offset += FLASH_PAGE_SIZE) {
         uint8_t page_copy[FLASH_PAGE_SIZE];
-        const uint32_t remaining_size = file_size - offset;
+        const uint remaining_size = file_size - offset;
 
         if (remaining_size >= FLASH_PAGE_SIZE) {
             // This page is full size
@@ -71,7 +73,7 @@ int wifi_settings_update_flash_unsafe(
     // Test copy
     fr.size = file_size;
     if (wifi_settings_flash_range_verify(&fr, file)) {
-        if (file_size < WIFI_SETTINGS_FILE_SIZE) {
+        if (file_size < max_file_size) {
             // Check file is terminated by '\xff'
             fr.start_address += file_size;
             fr.size = 1;
@@ -87,7 +89,7 @@ int wifi_settings_update_flash_unsafe(
 
 typedef struct wifi_settings_flash_safe_params_t {
     const char* file;
-    uint32_t file_size;
+    uint file_size;
     int rc;
 } wifi_settings_flash_safe_params_t;
 
@@ -101,9 +103,9 @@ int wifi_settings_update_flash_safe(
             const uint file_size) {
     wifi_settings_flash_safe_params_t param;
     param.file = (const char*) file;
-    param.file_size = (uint32_t) file_size;
+    param.file_size = file_size;
     param.rc = PICO_ERROR_GENERIC;
-    int rc = flash_safe_execute(wifi_settings_flash_safe_internal, &param, ENTER_EXIT_TIMEOUT_MS);
+    int rc = flash_safe_execute(wifi_settings_flash_safe_internal, &param, UINT_MAX);
     if (rc == PICO_OK) {
         return param.rc;
     } else {

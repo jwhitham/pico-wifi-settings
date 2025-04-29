@@ -178,7 +178,7 @@ void activity_ping() {
     printf("Press a key to stop pinging:\n");
     absolute_time_t next_ping_time = make_timeout_time_ms(0);
     uint previous = 0;
-    while (getchar_timeout_us(100) < 0) {
+    while (ui_getchar_timeout_us(100) < 0) {
         if (time_reached(next_ping_time)) {
             next_ping_time = delayed_by_ms(next_ping_time, 1000);
             cyw43_arch_lwip_begin();

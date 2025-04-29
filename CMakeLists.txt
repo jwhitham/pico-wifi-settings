@@ -36,7 +36,7 @@ if ((NOT TARGET pico_mbedtls) AND (WIFI_SETTINGS_REMOTE GREATER 0))
 endif()
 
 message("wifi_settings: library is available.")
-set(WIFI_SETTINGS_VERSION_STRING "0.1.4")
+set(WIFI_SETTINGS_VERSION_STRING "0.2.0")
 set(WIFI_SETTINGS_PROJECT_URL "https://github.com/jwhitham/pico-wifi-settings")
 
 
@@ -70,6 +70,12 @@ target_compile_definitions(wifi_settings INTERFACE
     WIFI_SETTINGS_VERSION_STRING="${WIFI_SETTINGS_VERSION_STRING}"
     WIFI_SETTINGS_PROJECT_URL="${WIFI_SETTINGS_PROJECT_URL}"
 )
+if (WIFI_SETTINGS_FILE_ADDRESS)
+    message("wifi_settings: use alternate Flash address for wifi-settings file: ${WIFI_SETTINGS_FILE_ADDRESS}")
+    target_compile_definitions(wifi_settings INTERFACE
+        WIFI_SETTINGS_FILE_ADDRESS=${WIFI_SETTINGS_FILE_ADDRESS}
+    )
+endif()
 
 if (WIFI_SETTINGS_REMOTE GREATER 0)
     if (WIFI_SETTINGS_REMOTE GREATER 1)

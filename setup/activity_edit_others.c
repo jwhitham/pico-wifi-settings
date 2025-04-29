@@ -17,7 +17,6 @@
 #include <string.h>
 
 #define MAX_LINES_PER_PAGE      15
-#define MAX_PAGES               100
 
 typedef void (* callback_t) (void);
 
@@ -81,48 +80,33 @@ static void select_user_defined_keys() {
     file_handle_t fh;
     file_load(&fh);
 
-    int page_start_index[MAX_PAGES];
-    memset(page_start_index, 0, sizeof(page_start_index));
-
-    int page_number = 0;
-
     while(true) {
         menu_t menu;
         ui_menu_init(&menu, MENU_FLAG_ENABLE_CANCEL);
 
-        int search_index = page_start_index[page_number];
-        bool is_final_page = ((page_number + 1) >= MAX_PAGES);
         char key[MAX_EDIT_LINE_LENGTH];
         char value[MAX_EDIT_LINE_LENGTH];
+        int search_index = 0;
 
-        for (int i = 0; i < MAX_LINES_PER_PAGE; i++) {
-            int key_size = file_get_next_key_value(&fh, &search_index,
+        int key_size = 0;
+
+        // Item at menu index 0:
+        ui_menu_add_item(&menu, NULL, "Add new key");
+
+        do {
+            // add items until either the menu is full or there are no more items
+            key_size = file_get_next_key_value(&fh, &search_index,
                     key, sizeof(key), value, sizeof(value));
-            if (key_size <= 0) {
-                is_final_page = true;
-                break;
-            }
-            ui_menu_add_item(&menu, NULL, "Edit %s=%s", key, value);
-        }
-        if (!is_final_page) {
-            page_start_index[page_number + 1] = search_index;
-        }
-
-        int none_of_these_index = ui_menu_add_item(&menu, NULL, "Add new key");
-        int previous_index = MENU_ITEM_NOTHING;
-        if (page_number > 0) {
-            previous_index = ui_menu_add_item(&menu, NULL, "Previous page");
-        }
-        int next_index = MENU_ITEM_NOTHING;
-        if (!is_final_page) {
-            next_index = ui_menu_add_item(&menu, NULL, "Next page");
-        }
+        } while ((key_size > 0)
+            && (ui_menu_add_item(&menu, NULL, "Edit %s=%s", key, value)
+                            != MENU_ITEM_NO_MORE_SPACE));
 
         const int choice = ui_menu_show(&menu, NULL);
-        if ((0 <= choice) && (choice < none_of_these_index)) {
-            // find the key again
-            search_index = page_start_index[page_number];
-            for (int i = 0; i <= choice; i++) {
+        if (choice > 0) {
+            // Find the key again by stepping through "choice" menu items
+            // (First menu item is "Add new key")
+            search_index = 0;
+            for (int i = 0; i < choice; i++) {
                 file_get_next_key_value(&fh, &search_index,
                         key, sizeof(key), value, sizeof(value));
             }
@@ -130,7 +114,7 @@ static void select_user_defined_keys() {
             if (!edit_key_value_check_special(&fh, key)) {
                 return; // cancel
             }
-        } else if (choice == none_of_these_index) {
+        } else if (choice == 0) {
             // Ask the user what key to edit
             printf("Please enter the key you wish to create or edit:\n");
             strcpy(key, "");
@@ -141,14 +125,6 @@ static void select_user_defined_keys() {
                 if (!edit_key_value_check_special(&fh, key)) {
                     return; // cancel
                 }
-            }
-        } else if (choice == previous_index) {
-            if (page_number > 0) {
-                page_number--;
-            }
-        } else if (choice == next_index) {
-            if ((page_number + 1) < MAX_PAGES) {
-                page_number++;
             }
         } else if (choice == MENU_ITEM_CANCEL) {
             return; // cancel

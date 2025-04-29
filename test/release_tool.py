@@ -130,6 +130,21 @@ def main() -> None:
     if bazel_version != cmake_version:
         raise Exception("Bazel and CMake library versions don't match: "
             f"Bazel {bazel_version} CMake {cmake_version}")
+
+    # Version (docs)
+    re_docs_version = re.compile(r'^\s*tag\s*=\s*"v(.+)"\s*,.#.*the most recent release.*$')
+    docs_version = ""
+    for line in open(PICO_WIFI_SETTINGS_ROOT_PATH / "doc" / "BAZEL.md", "rt"):
+        m = re_docs_version.match(line)
+        if m is not None:
+            docs_version = m.group(1)
+            break
+        
+    if not docs_version:
+        raise Exception("Unable to determine example version (in doc/BAZEL.md)")
+    if docs_version != cmake_version:
+        raise Exception("doc/BAZEL.md example and CMake library versions don't match: "
+            f"Docs example {docs_version} CMake {cmake_version}")
     version = cmake_version
 
     # Create output directory

@@ -11,9 +11,10 @@
 
 #include "pico/stdlib.h"
 
-#define MAX_DESCRIPTION_SIZE        75
-#define MAX_EDIT_LINE_LENGTH        73
-#define MAX_MENU_ITEMS              (9 + 26)
+#define MAX_DESCRIPTION_SIZE            75
+#define MAX_EDIT_LINE_LENGTH            73
+#define MAX_MENU_ITEMS                  240
+#define CONTROL_RIGHT_SQUARE_BRACKET    0x1d // control+] (exit from telnet)
 
 typedef struct menu_item_t {
     char description[MAX_DESCRIPTION_SIZE];
@@ -50,5 +51,9 @@ void* ui_menu_get_arg(menu_t* menu, int index);
 bool ui_ask_for_password(const char* ssid, char* password);
 bool ui_file_save(struct file_handle_t*);
 bool ui_waiting_check_abort();
+void ui_file_full_error();
+
+int ui_getchar_timeout_us(uint32_t timeout_us);
+int ui_getchar();
 
 #endif

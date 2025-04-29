@@ -29,13 +29,13 @@ typedef struct wifi_slot_item_t {
 } wifi_slot_item_t;
 
 typedef struct wifi_slot_data_t {
-    wifi_slot_item_t item[NUM_SSIDS];
+    wifi_slot_item_t item[MAX_NUM_SSIDS];
     int num_items;
 } wifi_slot_data_t;
 
 void wifi_slots_convert_string_to_bssid(const uint8_t* bssid, char* text);
 void wifi_slots_renumber(wifi_slot_data_t* slot_data);
 void wifi_slots_load(const file_handle_t* fh, wifi_slot_data_t* slot_data);
-void wifi_slots_save(file_handle_t* fh, const wifi_slot_data_t* slot_data);
+bool wifi_slots_save(file_handle_t* fh, const wifi_slot_data_t* slot_data);
 
 #endif

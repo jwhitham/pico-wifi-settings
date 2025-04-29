@@ -65,9 +65,10 @@ It is "menu-driven".
 The app displays a series of choices (a "menu"), each associated with a number or letter.
 When the app starts up, the menu appears like this:
 ```
-    pico-wifi-settings setup app, version 0.1.0-abcdef01
-    This Pico has board id 7D47CF75B7A48BD7
+    pico-wifi-settings setup app, version 0.2.0-abcdef01
 
+    This Pico has board id 7D47CF75B7A48BD7
+    wifi-settings file found at default location 0x3fc000
     WiFi is connected to ssid2=MyHomeWiFi
     IPv4 address = 192.168.0.182 netmask = 255.255.255.0 gateway = 192.168.0.1
 
@@ -78,20 +79,14 @@ When the app starts up, the menu appears like this:
      4. Force disconnect/reconnect
      5. Set update_secret for remote updates
      6. Edit other items in the wifi-settings file
-     7. Reboot (return to bootloader)
-    Press '1' .. '7' to select:
+     7. Change wifi-settings file location
+     8. Reboot (return to bootloader)
+    Press '1' .. '8' to select:
 ```
 You press the key corresponding to the choice that you want. To scan for a new hotspot,
 you would press `1`. Then you would see a list of available hotspots, like:
 ```
-    pico-wifi-settings setup app, version 0.1.0-abcdef01
-    This Pico has board id 7D47CF75B7A48BD7
-
-    WiFi is disconnected
-    cyw43_wifi_link_status = CYW43_LINK_DOWN scan_active = False rssi = 0
-
     Found 4 - please choose:
-
      1. MyHomeWifi                        | 64:69:33:1f:00:1f |   1 | -62 dB
      2. <unnamed>                         | ee:48:b8:57:9d:4e |   6 | -81 dB
      3. Random Other WiFi                 | e8:48:b8:57:9d:4e |   6 | -78 dB
@@ -131,6 +126,14 @@ Some hotspot types are not supported (or have never been tested). These include:
 
 WiFi hotspots do not need to offer Internet access, but they must have a DHCP server,
 because the library does not provide a way to set a static IP address yet.
+
+# wifi-settings file location
+
+The setup app is able to search for the wifi-settings file on startup; this
+supports applications that store the file in a non-default location, or those
+that use the original default from version 0.1. The menu option
+`Change wifi-settings file location` allows an existing wifi-settings file
+to be moved to a different location.
 
 # Building from source with CMake
 

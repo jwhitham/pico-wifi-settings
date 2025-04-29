@@ -117,7 +117,7 @@ Add the following lines to your `MODULE.bazel` file:
 
     git_override(
         module_name = "pico-wifi-settings",
-        tag = "v0.1.4", # <-- use the version of the most recent release
+        tag = "v0.2.0", # <-- use the version of the most recent release
         remote = "https://github.com/jwhitham/pico-wifi-settings.git",
     )
 ```
@@ -166,6 +166,19 @@ The supported values are:
  - `WIFI_SETTINGS_REMOTE=2` is the maximum setting. This enables commands
    for remote access to Pico memory (RAM and Flash) including "over the air" (OTA)
    updates.
+
+## Setting a custom wifi-settings file address
+
+If you wish to store the wifi-settings file at a specific address you can
+do so with the `WIFI_SETTINGS_FILE_ADDRESS=0x....` option.
+The value `0x...` should be an address relative to the start of Flash.
+
+The option can be used like this:
+```
+    bazel build ... \
+      --@pico-wifi-settings//bazel/config:WIFI_SETTINGS_FILE_ADDRESS=0x1ff000 \
+      ...
+```
 
 ## Building with pico-wifi-settings and Bazel
 

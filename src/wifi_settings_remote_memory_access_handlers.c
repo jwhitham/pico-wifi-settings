@@ -36,6 +36,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 
 #ifndef ENABLE_REMOTE_MEMORY_ACCESS
 #error "ENABLE_REMOTE_MEMORY_ACCESS must be enabled, i.e. cmake -DWIFI_SETTINGS_REMOTE=2"
@@ -45,9 +46,6 @@
 #error "MAX_DATA_SIZE must be >= FLASH_SECTOR_SIZE"
 #endif
 
-
-// End of usable Flash allows for the wifi-settings sector. This is a Flash address (0 = start of Flash).
-#define FLASH_ADDRESS_END_OF_USABLE_FLASH (FLASH_ADDRESS_OF_WIFI_SETTINGS_FILE)
 
 // Copy from flash.c
 #define FLASH_BLOCK_ERASE_CMD 0xd8
@@ -184,7 +182,7 @@ int32_t wifi_settings_write_flash_handler(
 
     // Looks good - rewrite sectors in Flash
     rc = flash_safe_execute(wifi_settings_write_flash_handler_internal,
-                            &param, ENTER_EXIT_TIMEOUT_MS);
+                            &param, UINT_MAX);
     if (rc != PICO_OK) {
         return rc;
     }

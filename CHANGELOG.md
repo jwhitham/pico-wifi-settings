@@ -2,6 +2,14 @@
 
 This documents important changes in the project.
 
+## v0.2.0
+
+- Support for wifi-settings file at a user-defined address:
+  - `-DWIFI_SETTINGS_FILE_ADDRESS=0x...` can be used to set the address at build time
+  - The setup app searches for the wifi-settings file and allows the user to reconfigure the location
+- The default address of the wifi-settings file changes to 16kb before the end of Flash
+  - i.e. 0x101fc000 on Pico and 0x103fc000 on Pico 2
+
 ## v0.1.4
 
 - Create subset library, wifi\_settings\_connect.

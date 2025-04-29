@@ -13,7 +13,9 @@
 #include "activity_force_disconnect_reconnect.h"
 #include "activity_set_shared_secret.h"
 #include "activity_edit_others.h"
+#include "activity_set_file_location.h"
 #include "user_interface.h"
+#include "file_finder.h"
 
 #include "wifi_settings.h"
 
@@ -32,7 +34,13 @@ static void reboot_callback() {
 
 void activity_root() {
 
+    // Determine the location of the wifi-settings file (if it is present)
+    file_finder_init();
+
+    // Initialise wifi-settings library
     const int init_rc = wifi_settings_init();
+
+    // Begin connecting
     wifi_settings_connect();
     ui_clear();
 
@@ -42,13 +50,33 @@ void activity_root() {
     while (choice != MENU_ITEM_CANCEL) {
         ui_menu_init(&menu, 0);
         if (init_rc == 0) {
-            ui_menu_add_item(&menu, activity_scan_for_a_hotspot, "Scan for a new hotspot");
-            if (!wifi_settings_has_no_wifi_details()) {
-                ui_menu_add_item(&menu, activity_edit_hotspots, "View and edit known hotspots");
-                ui_menu_add_item(&menu, activity_connection_test, "Perform connection test");
-                ui_menu_add_item(&menu, activity_force_disconnect_reconnect, "Force disconnect/reconnect");
-                ui_menu_add_item(&menu, activity_set_shared_secret, "Set update_secret for remote updates");
-                ui_menu_add_item(&menu, activity_edit_others, "Edit other items in the wifi-settings file");
+            switch (file_finder_get_status()) {
+                case FILE_IS_CORRUPT:
+                    ui_menu_add_item(&menu, activity_set_file_location,
+                                "Create wifi-settings file");
+                    break;
+                case FILE_HAS_WIFI_DETAILS:
+                    ui_menu_add_item(&menu, activity_scan_for_a_hotspot,
+                                "Scan for a hotspot");
+                    ui_menu_add_item(&menu, activity_edit_hotspots, 
+                                "View and edit known hotspots");
+                    ui_menu_add_item(&menu, activity_connection_test,
+                                "Perform connection test");
+                    ui_menu_add_item(&menu, activity_force_disconnect_reconnect,
+                                "Force disconnect/reconnect");
+                    ui_menu_add_item(&menu, activity_set_shared_secret,
+                                "Set update_secret for remote updates");
+                    ui_menu_add_item(&menu, activity_edit_others,
+                                "Edit other items in the wifi-settings file");
+                    ui_menu_add_item(&menu, activity_set_file_location,
+                                "Change wifi-settings file location");
+                    break;
+                default:
+                    ui_menu_add_item(&menu, activity_scan_for_a_hotspot,
+                                "Scan for a hotspot");
+                    ui_menu_add_item(&menu, activity_set_file_location,
+                                "Change wifi-settings file location");
+                    break;
             }
         }
         ui_menu_add_item(&menu, reboot_callback, "Reboot (return to bootloader)");

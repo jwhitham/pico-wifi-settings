@@ -14,6 +14,7 @@
 #include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+#include "pico/binary_info.h"
 
 #include "mbedtls/sha256.h"
 #include "mbedtls/aes.h"
@@ -905,6 +906,7 @@ int wifi_settings_remote_init() {
             ID_UPDATE_REBOOT_HANDLER,
             wifi_settings_update_reboot_handler1,
             wifi_settings_update_reboot_handler2, NULL);
+    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings remote file updates"));
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
     wifi_settings_remote_set_handler(ID_READ_HANDLER,
             wifi_settings_read_handler, NULL);
@@ -914,6 +916,7 @@ int wifi_settings_remote_init() {
             ID_OTA_FIRMWARE_UPDATE_HANDLER,
             wifi_settings_ota_firmware_update_handler1,
             wifi_settings_ota_firmware_update_handler2, NULL);
+    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings remote memory access"));
 #endif
 
     // Start TCP service

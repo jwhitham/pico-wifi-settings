@@ -41,7 +41,7 @@ void wifi_slots_load(const file_handle_t* fh, wifi_slot_data_t* slot_data) {
     // Load SSIDs from file, copy them to an array of items
     memset(slot_data, 0, sizeof(wifi_slot_data_t));
 
-    for (int index_in_file = 1; index_in_file <= NUM_SSIDS; index_in_file++) {
+    for (int index_in_file = 1; index_in_file <= MAX_NUM_SSIDS; index_in_file++) {
         // Here is the array index that we will populate if possible
         const int index_in_array = slot_data->num_items;
         bool is_used = false;
@@ -97,8 +97,19 @@ void wifi_slots_renumber(wifi_slot_data_t* slot_data) {
     qsort(slot_data->item, slot_data->num_items, sizeof(wifi_slot_item_t), compare_slot_items);
 }
 
-void wifi_slots_save(file_handle_t* fh, const wifi_slot_data_t* slot_data) {
+bool wifi_slots_save(file_handle_t* fh, const wifi_slot_data_t* slot_data) {
+    // discard any other wifi slots from the file first, to make space
+    for (int index_in_file = slot_data->num_items + 1; index_in_file <= MAX_NUM_SSIDS; index_in_file++) {
+        char key[SEARCH_KEY_SIZE];
+        generate_bssid_search_key(key, index_in_file);
+        file_discard(fh, key);
+        generate_ssid_search_key(key, index_in_file);
+        file_discard(fh, key);
+        generate_pass_search_key(key, index_in_file);
+        file_discard(fh, key);
+    }
     // add updated wifi slots
+    bool added_ok = true;
     for (int index_in_array = 0; index_in_array < slot_data->num_items; index_in_array++) {
         const int index_in_file = index_in_array + 1;
         char key[SEARCH_KEY_SIZE];
@@ -106,7 +117,7 @@ void wifi_slots_save(file_handle_t* fh, const wifi_slot_data_t* slot_data) {
         // Password first (prepending)
         if (!slot_data->item[index_in_array].is_open) {
             generate_pass_search_key(key, index_in_file);
-            file_set(fh, key, slot_data->item[index_in_array].password);
+            added_ok = file_set(fh, key, slot_data->item[index_in_array].password) && added_ok;
         }
         // SSID or BSSID
         if (slot_data->item[index_in_array].is_bssid) {
@@ -120,17 +131,7 @@ void wifi_slots_save(file_handle_t* fh, const wifi_slot_data_t* slot_data) {
             file_discard(fh, key);
             generate_ssid_search_key(key, index_in_file);
         }
-        file_set(fh, key, slot_data->item[index_in_array].ssid);
+        added_ok = file_set(fh, key, slot_data->item[index_in_array].ssid) && added_ok;
     }
-    // discard any other wifi slots from the file
-    for (int index_in_file = slot_data->num_items + 1; index_in_file <= NUM_SSIDS; index_in_file++) {
-        char key[SEARCH_KEY_SIZE];
-        generate_bssid_search_key(key, index_in_file);
-        file_discard(fh, key);
-        generate_ssid_search_key(key, index_in_file);
-        file_discard(fh, key);
-        generate_pass_search_key(key, index_in_file);
-        file_discard(fh, key);
-    }
-
+    return added_ok;
 }

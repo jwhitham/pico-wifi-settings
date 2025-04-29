@@ -10,7 +10,7 @@ manages WiFi connections for your Pico application. It provides:
  - an optional over-the-air (OTA) update service for uploading new firmware,
  - a [Pico W setup app](doc/SETUP_APP.md) for first-time setup.
 
-You can store details for up to 16 hotspots, and update them
+You can store details for up to 100 hotspots, and update them
 at any time by USB or WiFi. This avoids any need to recompile Pico firmware
 with new `WIFI_SSID` and `WIFI_PASSWORD` settings, which is required for
 [Pico WiFi examples](https://github.com/raspberrypi/pico-examples/). You can

@@ -15,12 +15,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ENTER_EXIT_TIMEOUT_MS   100
-
 /// @brief Replace the settings file in Flash without using flash_safe_execute
 /// (this should only be used if the other CPU core is locked out).
 /// @param[in] file Pointer to replacement file data
-/// @param[in] file_size Size of file (no more than WIFI_SETTINGS_FILE_SIZE)
+/// @param[in] file_size Size of file: maximum is the size set by
+/// wifi_settings_range_get_wifi_settings_file()
 /// @return PICO_OK if updated successfully, or PICO_ERROR_...
 int wifi_settings_update_flash_unsafe(
             const char* file,
@@ -28,7 +27,8 @@ int wifi_settings_update_flash_unsafe(
 
 /// @brief Replace the settings file in Flash using flash_safe_execute.
 /// @param[in] file Pointer to replacement file data
-/// @param[in] file_size Size of file (no more than WIFI_SETTINGS_FILE_SIZE)
+/// @param[in] file_size Size of file: maximum is the size set by
+/// wifi_settings_range_get_wifi_settings_file()
 /// @return PICO_OK if updated successfully, or PICO_ERROR_...
 int wifi_settings_update_flash_safe(
             const char* file,
