@@ -21,12 +21,22 @@ the WiFi settings file.
    - Pico 2 W: use `setup_app__pico2_w__<version>.uf2`
  - Drag and drop the `.uf2` file for your Pico model from the zip file to your Pico device
  - Connect to Pico W using your serial terminal program
-   - More instructions can be found in the [Getting Started Guide, chapter 5](https://datasheets.raspberrypi.com/pico/getting-started-with-pico.pdf)
-   - Briefly, using minicom on Linux, enter `minicom -D /dev/ttyACM0`
+   - On Linux, your Pico will appear as a serial device which you can use
+     with a terminal program such as `minicom`.
+     - To find all possible COM port numbers, connect the Pico with the setup app installed,
+       open a terminal window and enter `ls /dev/ttyACM*`
+     - Run `minicom -D /dev/ttyACM0` (or another device name)
    - On Windows, your Pico will appear as a COM port which you can use
      with [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) in its
-     serial mode; to find the correct COM port number, look in the Device Manager.
+     serial mode.
+     - To find all possible COM port numbers, connect the Pico with the setup app installed,
+       open a Powershell window and enter `[System.IO.Ports.SerialPort]::getportnames()`.
+       This produces a list of available COM ports like `COM1`, `COM10`, etc.
+     - Open PuTTY and select the "Serial" option for "Connection type"
+     - Enter the largest-numbered COM port in "Serial line", e.g. `COM10`
+     - Click `Open` to connect
  - Once connected to the serial port, press Enter to wake the application.
+ - If the setup app does not appear, try a different port or device
 
 # First-time setup
 
@@ -96,6 +106,15 @@ you would press `1`. Then you would see a list of available hotspots, like:
     Press '1' .. '6' to select:
 ```
 As before, you press a button to choose one of them or cancel. 
+
+Some menus are split across multiple pages, because there are too many options for
+one page. In these menus, you can press 'n' and 'p' to move to the next or previous page.
+You can leave any menu by pressing control-C.
+
+Some terminal programs (e.g. PuTTY and minicom) allow you to use arrow keys to
+navigate in menus. If you use the arrow keys, the current option is highlighted in bold, and
+pressing Enter will select it.
+
 Aside from menus, the app may also ask yes/no questions:
 ```
     WiFi passwords must be at least 8 characters.
@@ -114,6 +133,7 @@ WiFi settings file on a PC](SETTINGS_FILE.md).
 
 At any time, you can cancel the current action by pressing control-C. During text entry
 you can also press control-Y to delete the whole line.
+
 
 # Unsupported hotspot types
 

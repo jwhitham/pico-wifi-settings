@@ -84,11 +84,11 @@ and the equivalent for Pico 2 W (RP2350):
 ## Location of the wifi-settings file
 
 The default location of the file (16kb before the final address in Flash)
-has been chosen because the final three 4kb pages of Flash are already assigned
-a function by the Pico SDK. The Bluetooth library uses two 4kb pages for storage of
-devices that have been paired by Bluetooth. The final 4kb page is used for a workaround
-for the RP2350-E10 bug - this page may be erased when copying a UF2 file to a Pico 2
-via drag-and-drop. Therefore, these three pages are avoided.
+has been chosen because the final three 4kb Flash sectors are already assigned
+a function by the Pico SDK. The Bluetooth library uses two 4kb sectors for storage of
+devices that have been paired by Bluetooth. The final 4kb sector is used for a workaround
+for the RP2350-E10 bug - this sector may be erased when copying a UF2 file to a Pico 2
+via drag-and-drop. Therefore, these three sectors are avoided.
 
 If you wish to store the wifi-settings file at a specific address you can
 do so by setting `-DWIFI_SETTINGS_FILE_ADDRESS=0x....` when running cmake.
@@ -97,8 +97,8 @@ The value `0x...` should be an address relative to the start of Flash.
 Versions of pico-wifi-settings before 0.2.0 used `0x1ff000` for Pico 1 and
 `0x3fe000` for Pico 2. If you used pico-wifi-settings before 0.2.0, then you can
 - build with `-DWIFI_SETTINGS_FILE_ADDRESS=0x1ff000` or `0x3fe000` to use the old address, or
-- use the [setup app](SETUP_APP.md) feature named
-  `Change wifi-settings file location` to move the file to the default location, or
+- use the [setup app](SETUP_APP.md) feature
+  "Change wifi-settings file location" to move the file to the default location, or
 - use picotool to move the wifi-settings file to the default location, or
 - implement the `wifi_settings_range_get_wifi_settings_file()` function in your
   application code to provide any Flash address you wish, including an address

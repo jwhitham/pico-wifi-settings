@@ -25,7 +25,8 @@ easily change your WiFi password or move your Pico to a different WiFi hotspot.
 
 pico-wifi-settings uses the `cyw43` driver and `lwip` network stack
 which are provided with the
-[Pico SDK](https://github.com/raspberrypi/pico-sdk/). This is
+[Pico SDK](https://github.com/raspberrypi/pico-sdk/).
+pico-wifi-settings is
 an open-source library with the same license as the Pico SDK.
 The size can be reduced by
 disabling optional [remote update features](doc/REMOTE.md).

@@ -26,12 +26,12 @@
 //         0x103fc000 on Pico 2 W
 //    and may have other values on other RP2040/RP2350 boards.
 //
-// This location is chosen because the final three 4kb pages of Flash are
+// This location is chosen because the final three 4kb sectors of Flash are
 // already assigned a function by the Pico SDK. The Bluetooth library uses
-// two 4kb pages for storage of devices that have been paired by Bluetooth.
-// The final 4kb page is used for a workaround for the RP2350-E10 bug - this
-// page may be erased when copying a UF2 file to a Pico 2 via drag-and-drop.
-// Therefore, these three pages are avoided.
+// two 4kb sectors for storage of devices that have been paired by Bluetooth.
+// The final 4kb sector is used for a workaround for the RP2350-E10 bug - this
+// sector may be erased when copying a UF2 file to a Pico 2 via drag-and-drop.
+// Therefore, these three sectors are avoided.
 //
 // If you wish to store the wifi-settings file at a specific address you can
 // do so by setting -DWIFI_SETTINGS_FILE_ADDRESS=0x.... when running
