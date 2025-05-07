@@ -6,6 +6,7 @@
 #endif
 
 #define __packed
+#define __weak
 
 #endif
 

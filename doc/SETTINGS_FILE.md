@@ -8,7 +8,7 @@ limited to 4096 bytes.
 
 The file can be updated in several ways:
  - using the [setup](SETUP_APP.md),
- - by USB, using [picotool](https://github.com/raspberrypi/picotool),
+ - by USB, using [picotool](https://github.com/raspberrypi/pico-sdk-tools/releases),
  - by WiFi, when the pico-wifi-settings remote update feature is enabled.
 
 The USB and WiFi methods have the advantage that you can create the file on
@@ -35,8 +35,8 @@ and store them in the file.
 
 To edit the file on a PC, use any text editor to create a text file
 similar to the example above. Then,
-use [picotool](https://github.com/raspberrypi/picotool) to send the file
-via USB.
+use [picotool](https://github.com/raspberrypi/pico-sdk-tools/releases)
+to send the file via USB.
 
 Each line in the file should contain a key and a value, separated by `=`.
 
@@ -55,11 +55,8 @@ You can also use the following:
 
 # Copying the WiFi settings file by USB
 
-You can use [picotool](https://github.com/raspberrypi/picotool) to copy the
-file from your PC to your Pico via USB.
-
-picotool is part of the Pico SDK. 
-You need to build picotool with USB support for your OS (or download a pre-built copy).
+You can use [picotool](https://github.com/raspberrypi/pico-sdk-tools/releases)
+to copy the file from your PC to your Pico via USB.
 
 To use picotool,
 boot the Pico in bootloader mode by holding down the BOOTSEL button while plugging it
@@ -69,7 +66,7 @@ The default address is 16kb before the final address in Flash:
  - On Pico W, use `0x101fc000` as the address.
  - On Pico 2 W, use `0x103fc000` as the address.
 
-You must also rename your WiFi settings file so that it ends with `.bin` as 
+You must also rename your WiFi settings file so that it ends with `.bin` as
 picotool is not able to upload files unless they are `.bin`, `.elf` or `.uf2`.
 
 Here is a sample upload command for Pico W (RP2040):
@@ -91,18 +88,19 @@ for the RP2350-E10 bug - this sector may be erased when copying a UF2 file to a 
 via drag-and-drop. Therefore, these three sectors are avoided.
 
 If you wish to store the wifi-settings file at a specific address you can
-do so by setting `-DWIFI_SETTINGS_FILE_ADDRESS=0x....` when running cmake.
-The value `0x...` should be an address relative to the start of Flash.
+do so by setting `-DWIFI_SETTINGS_FILE_ADDRESS=0x....` when running `cmake`.
+The value `0x...` should be an address relative to the start of Flash, so Flash address
+`0x1fc000` corresponds to absolute address `0x101fc000`.
 
-Versions of pico-wifi-settings before 0.2.0 used `0x1ff000` for Pico 1 and
-`0x3fe000` for Pico 2. If you used pico-wifi-settings before 0.2.0, then you can
-- build with `-DWIFI_SETTINGS_FILE_ADDRESS=0x1ff000` or `0x3fe000` to use the old address, or
-- use the [setup app](SETUP_APP.md) feature
-  "Change wifi-settings file location" to move the file to the default location, or
-- use picotool to move the wifi-settings file to the default location, or
-- implement the `wifi_settings_range_get_wifi_settings_file()` function in your
-  application code to provide any Flash address you wish, including an address
-  computed dynamically in some way.
+- Versions of pico-wifi-settings before 0.2.0 used `0x1ff000` for Pico 1 and
+  `0x3fe000` for Pico 2. If you used pico-wifi-settings before 0.2.0, then you can
+  - build with `-DWIFI_SETTINGS_FILE_ADDRESS=0x1ff000` or `0x3fe000` to use the old address, or
+  - use the [setup app](SETUP_APP.md) feature
+    "Change wifi-settings file location" to move the file to the default location, or
+  - use picotool to move the wifi-settings file to the default location, or
+  - implement the `wifi_settings_range_get_wifi_settings_file()` function in your
+    application code to provide any Flash address you wish, including an address
+    computed dynamically in some way.
 
 # Copying the WiFi settings file by WiFi
 
@@ -122,9 +120,13 @@ and Pico 2 W (RP2350):
 ```
     picotool save -r 0x103fc000 0x103fd000 backup.bin
 ```
-Characters after the end of the file will be copied (usually either 0x00 or 0xff).
-These can be safely deleted using your text editor. The backup is restored by
-using `picotool load` as described in "Copying the WiFi settings file by USB".
+Bytes after the end of the file will also be copied (usually either 0x00 or 0xff).
+These can be safely deleted. Some text editors will allow you to delete them,
+but if you have any difficulty, you can also remove them with a shell command such as:
+```
+    LC_ALL=C sed -i 's/[\x00\xFF]//g' backup.bin
+```
+The backup is restored using `picotool load` as described in "Copying the WiFi settings file by USB".
 
 These examples use the default location for the wifi-settings file. If you
 are using a custom location, e.g. building with

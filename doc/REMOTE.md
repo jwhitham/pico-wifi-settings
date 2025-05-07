@@ -102,7 +102,9 @@ of the board ID with the `--id` option in order to select a particular device;
 if a partial ID is used, it can be any substring. For example, `1718` and `854D` will
 both match `E6614854D3B51718`.
 
-Each board ID is unique to a Pico, and can also be printed using `picotool info -d` when the
+Each board ID is unique to a Pico, and can also be printed using 
+[picotool](https://github.com/raspberrypi/pico-sdk-tools/releases)
+with `picotool info -d` when the
 Pico is connected by USB (it appears as "flash id" or "chipid" depending on the
 Pico version). The board ID is also shown when running the [setup app](SETUP_APP.md)
 and will be printed out by the `remote_picotool info` command.
