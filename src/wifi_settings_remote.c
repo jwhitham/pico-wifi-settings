@@ -18,6 +18,7 @@
 
 #include "mbedtls/sha256.h"
 #include "mbedtls/aes.h"
+#include "mbedtls/version.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 
@@ -46,6 +47,13 @@
 #endif
 #ifndef WIFI_SETTINGS_VERSION_STRING
 #error "WIFI_SETTINGS_VERSION_STRING must be set"
+#endif
+
+#if MBEDTLS_VERSION_MAJOR < 3
+// These names were changed in mbedlts 3.x.x
+#define mbedtls_sha256_starts mbedtls_sha256_starts_ret
+#define mbedtls_sha256_update mbedtls_sha256_update_ret
+#define mbedtls_sha256_finish mbedtls_sha256_finish_ret
 #endif
 
 
@@ -185,21 +193,21 @@ static void generate_authentication(
     }
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
-    if ((0 != mbedtls_sha256_starts_ret(&ctx, 0))
-    || (0 != mbedtls_sha256_update_ret(&ctx, k_pad, HMAC_BLOCK_SIZE))
-    || (0 != mbedtls_sha256_update_ret(&ctx, session->client_challenge, CHALLENGE_SIZE))
-    || (0 != mbedtls_sha256_update_ret(&ctx, session->server_challenge, CHALLENGE_SIZE))
-    || (0 != mbedtls_sha256_update_ret(&ctx, (const uint8_t*) append_code, APPEND_CODE_SIZE))
-    || (0 != mbedtls_sha256_finish_ret(&ctx, digest_data))) {
+    if ((0 != mbedtls_sha256_starts(&ctx, 0))
+    || (0 != mbedtls_sha256_update(&ctx, k_pad, HMAC_BLOCK_SIZE))
+    || (0 != mbedtls_sha256_update(&ctx, session->client_challenge, CHALLENGE_SIZE))
+    || (0 != mbedtls_sha256_update(&ctx, session->server_challenge, CHALLENGE_SIZE))
+    || (0 != mbedtls_sha256_update(&ctx, (const uint8_t*) append_code, APPEND_CODE_SIZE))
+    || (0 != mbedtls_sha256_finish(&ctx, digest_data))) {
         panic("generate_authentication sha256 (1) failed");
     }
     for (i = 0; i < HMAC_BLOCK_SIZE; i++) {
         k_pad[i] ^= 0x5c ^ 0x36;
     }
-    if ((0 != mbedtls_sha256_starts_ret(&ctx, 0))
-    || (0 != mbedtls_sha256_update_ret(&ctx, k_pad, HMAC_BLOCK_SIZE))
-    || (0 != mbedtls_sha256_update_ret(&ctx, digest_data, HMAC_DIGEST_SIZE))
-    || (0 != mbedtls_sha256_finish_ret(&ctx, digest_data))) {
+    if ((0 != mbedtls_sha256_starts(&ctx, 0))
+    || (0 != mbedtls_sha256_update(&ctx, k_pad, HMAC_BLOCK_SIZE))
+    || (0 != mbedtls_sha256_update(&ctx, digest_data, HMAC_DIGEST_SIZE))
+    || (0 != mbedtls_sha256_finish(&ctx, digest_data))) {
         panic("generate_authentication sha256 (2) failed");
     }
     mbedtls_sha256_free(&ctx);
@@ -263,12 +271,12 @@ static void generate_enc_data_hash(
     mbedtls_sha256_context ctx;
 
     mbedtls_sha256_init(&ctx);
-    if ((0 != mbedtls_sha256_starts_ret(&ctx, 0))
-    || (0 != mbedtls_sha256_update_ret(&ctx, (uint8_t*) header,
+    if ((0 != mbedtls_sha256_starts(&ctx, 0))
+    || (0 != mbedtls_sha256_update(&ctx, (uint8_t*) header,
                     AES_BLOCK_SIZE - DATA_HASH_SIZE))
-    || (0 != mbedtls_sha256_update_ret(&ctx, session->data,
+    || (0 != mbedtls_sha256_update(&ctx, session->data,
                     header->data_size))
-    || (0 != mbedtls_sha256_finish_ret(&ctx, full_data_hash))) {
+    || (0 != mbedtls_sha256_finish(&ctx, full_data_hash))) {
         panic("generate_enc_data_hash sha256 failed");
     }
     mbedtls_sha256_free(&ctx);
@@ -873,10 +881,10 @@ void wifi_settings_remote_update_secret() {
         mbedtls_sha256_context ctx;
         mbedtls_sha256_init(&ctx);
         for (uint i = 0; i < 4096; i++) {
-            if ((0 != mbedtls_sha256_starts_ret(&ctx, 0))
-            || (0 != mbedtls_sha256_update_ret(&ctx, g_secret_hashed, HMAC_DIGEST_SIZE))
-            || (0 != mbedtls_sha256_update_ret(&ctx, update_secret, update_secret_size))
-            || (0 != mbedtls_sha256_finish_ret(&ctx, g_secret_hashed))) {
+            if ((0 != mbedtls_sha256_starts(&ctx, 0))
+            || (0 != mbedtls_sha256_update(&ctx, g_secret_hashed, HMAC_DIGEST_SIZE))
+            || (0 != mbedtls_sha256_update(&ctx, update_secret, update_secret_size))
+            || (0 != mbedtls_sha256_finish(&ctx, g_secret_hashed))) {
                 panic("update_secret sha256 failed");
             }
         }

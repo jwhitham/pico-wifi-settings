@@ -54,9 +54,10 @@ target_link_libraries(setup PRIVATE
         pico_multicore
     )
 target_compile_options(setup PRIVATE
-    -Wall -Wextra -Werror
-    -Wno-unused-parameter
-)
+        -Wall -Wextra -Werror
+        -Wno-array-parameter
+        -Wno-unused-parameter
+    )
 if (NOT SETUP_GIT_COMMIT)
     set(SETUP_GIT_COMMIT "??")
 endif()

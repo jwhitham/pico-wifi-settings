@@ -31,6 +31,13 @@
 
 #ifdef TEST_MODE_SHA256
 #include "mbedtls/sha256.h"
+#include "mbedtls/version.h"
+#if MBEDTLS_VERSION_MAJOR < 3
+// These names were changed in mbedlts 3.x.x
+#define mbedtls_sha256_starts mbedtls_sha256_starts_ret
+#define mbedtls_sha256_update mbedtls_sha256_update_ret
+#define mbedtls_sha256_finish mbedtls_sha256_finish_ret
+#endif
 #endif
 
 #ifdef TEST_MODE_AES256
@@ -82,9 +89,9 @@ int main() {
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
     uint8_t digest_data[32];
-    if ((0 != mbedtls_sha256_starts_ret(&ctx, 0))
-    || (0 != mbedtls_sha256_update_ret(&ctx, (const uint8_t*) "x", 1))
-    || (0 != mbedtls_sha256_finish_ret(&ctx, digest_data))) {
+    if ((0 != mbedtls_sha256_starts(&ctx, 0))
+    || (0 != mbedtls_sha256_update(&ctx, (const uint8_t*) "x", 1))
+    || (0 != mbedtls_sha256_finish(&ctx, digest_data))) {
         panic("sha256 failed");
     }
     mbedtls_sha256_free(&ctx);

@@ -2,6 +2,14 @@
 
 This documents important changes in the project.
 
+## v0.2.1
+
+- Support mbedtls v3 as used in pico-sdk 'develop'
+- Adjust build settings to avoid imposing -Werror
+- Add functions to access SSID and IP address directly
+- Update documentation with better link to picotool
+- Weak symbol for `wifi_settings_get_value_for_key`
+
 ## v0.2.0
 
 - Support for wifi-settings file at a user-defined address:

@@ -27,9 +27,11 @@ target_link_libraries(test PRIVATE
         pico_stdlib
     )
 target_compile_options(test PRIVATE
-    -Wall -Wextra -Werror
-    -Wno-unused-parameter -Os
-)
+        -Wall -Wextra -Werror
+        -Wno-array-parameter
+        -Wno-unused-parameter
+        -Os
+    )
 
 if (TEST_MODE STREQUAL "basic")
     target_link_libraries(test PRIVATE

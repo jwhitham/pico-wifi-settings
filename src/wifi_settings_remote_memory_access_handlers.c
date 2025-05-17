@@ -32,6 +32,7 @@
 #endif
 
 #include "mbedtls/sha256.h"
+#include "mbedtls/version.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -44,6 +45,13 @@
 
 #if MAX_DATA_SIZE < FLASH_SECTOR_SIZE
 #error "MAX_DATA_SIZE must be >= FLASH_SECTOR_SIZE"
+#endif
+
+#if MBEDTLS_VERSION_MAJOR < 3
+// These names were changed in mbedlts 3.x.x
+#define mbedtls_sha256_starts mbedtls_sha256_starts_ret
+#define mbedtls_sha256_update mbedtls_sha256_update_ret
+#define mbedtls_sha256_finish mbedtls_sha256_finish_ret
 #endif
 
 
@@ -294,9 +302,9 @@ int32_t wifi_settings_ota_firmware_update_handler1(
     mbedtls_sha256_init(&ctx);
     uint8_t digest_data[WIFI_SETTINGS_OTA_HASH_SIZE];
 
-    if ((0 != mbedtls_sha256_starts_ret(&ctx, 0))
-    || (0 != mbedtls_sha256_update_ret(&ctx, copy_from_lr.start_address, copy_from_lr.size))
-    || (0 != mbedtls_sha256_finish_ret(&ctx, digest_data))) {
+    if ((0 != mbedtls_sha256_starts(&ctx, 0))
+    || (0 != mbedtls_sha256_update(&ctx, copy_from_lr.start_address, copy_from_lr.size))
+    || (0 != mbedtls_sha256_finish(&ctx, digest_data))) {
         return PICO_ERROR_GENERIC;
     }
     mbedtls_sha256_free(&ctx);

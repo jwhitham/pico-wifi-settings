@@ -125,7 +125,7 @@ void mbedtls_sha256_free(mbedtls_sha256_context *mctx) {
     mctx->opaque_hash = NULL;
 }
 
-int mbedtls_sha256_starts_ret(mbedtls_sha256_context *mctx, int is224) {
+int mbedtls_sha256_starts(mbedtls_sha256_context *mctx, int is224) {
     ASSERT(mctx);
     ASSERT(!is224);
 
@@ -142,7 +142,7 @@ int mbedtls_sha256_starts_ret(mbedtls_sha256_context *mctx, int is224) {
     return 0;
 }
 
-int mbedtls_sha256_update_ret(mbedtls_sha256_context *mctx,
+int mbedtls_sha256_update(mbedtls_sha256_context *mctx,
                               const unsigned char *input,
                               size_t ilen) {
     ASSERT(mctx);
@@ -155,7 +155,7 @@ int mbedtls_sha256_update_ret(mbedtls_sha256_context *mctx,
     return 0;
 }
 
-int mbedtls_sha256_finish_ret(mbedtls_sha256_context *mctx,
+int mbedtls_sha256_finish(mbedtls_sha256_context *mctx,
                               unsigned char output[_SHA256_BLOCK_SIZE]) {
     ASSERT(mctx);
     ASSERT(mctx->active);
