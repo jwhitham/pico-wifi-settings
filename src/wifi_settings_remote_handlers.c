@@ -271,6 +271,8 @@ int32_t wifi_settings_update_reboot_handler1(
             return PICO_ERROR_NOT_PERMITTED;
         }
     }
+    // pass all input to the second stage
+    *output_data_size = input_data_size;
     return 0;
 }
 

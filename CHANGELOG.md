@@ -2,6 +2,12 @@
 
 This documents important changes in the project.
 
+## v0.2.2
+
+- Fix a bug with `remote_picotool reboot` which would corrupt
+  the wifi\_settings file! This bug was introduced in v0.1.3
+  when `wifi_settings_update_reboot_handler1` was added.
+
 ## v0.2.1
 
 - Support mbedtls v3 as used in pico-sdk 'develop'

@@ -10,7 +10,7 @@
 #
 module(
     name = "pico-wifi-settings",
-    version = "0.2.1",
+    version = "0.2.2",
 )
 
 bazel_dep(name = "pico-sdk", version = "2.1.1")
