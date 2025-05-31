@@ -273,7 +273,8 @@ int32_t wifi_settings_update_reboot_handler1(
     }
     // pass all input to the second stage
     *output_data_size = input_data_size;
-    return 0;
+    // an input_parameter value of 1 indicates that reboot_bootloader was requested
+    return input_parameter;
 }
 
 // For ID_UPDATE_REBOOT_HANDLER (second stage)
@@ -281,7 +282,7 @@ void wifi_settings_update_reboot_handler2(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t callback1_data_size,
-        int32_t callback1_parameter,
+        int32_t callback1_return,
         void* arg) {
 
     if (callback1_data_size != 0) {
@@ -294,7 +295,8 @@ void wifi_settings_update_reboot_handler2(
         wifi_settings_update_flash_unsafe((const char*) data_buffer, (uint) callback1_data_size);
     }
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
-    if (callback1_parameter == 1) {
+    if (callback1_return == 1) {
+        // reboot_bootloader was requested
         // go to the bootloader instead of rebooting into user firmware
         reset_usb_boot(0, 0);
     }

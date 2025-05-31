@@ -70,7 +70,7 @@ typedef void (* handler_callback2_t) (
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t callback1_data_size,
-        int32_t callback1_parameter,
+        int32_t callback1_return,
         void* arg);
 
 /// @brief Initialise wifi_settings_remote service

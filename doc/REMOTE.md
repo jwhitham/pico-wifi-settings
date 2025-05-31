@@ -46,7 +46,7 @@ You could generate a suitable random update secret using a tool such as
 `openssl rand -base64 33`. Here is an example with a very weak password which
 will be used throughout this document:
 ```
-    update_secret=hunter2
+update_secret=hunter2
 ```
 
 # Testing remote access
@@ -55,7 +55,7 @@ To test remote access to a Pico application, such as
 the [setup app](SETUP_APP.md), run [remote\_picotool](../remote_picotool) with
 the `info` parameter and the update secret:
 ```
-    python remote_picotool --secret hunter2 info
+python remote_picotool --secret hunter2 info
 ```
 This will automatically search for your Pico using a UDP broadcast. If successful,
 it will print out some information about your Pico.
@@ -65,7 +65,7 @@ it will print out some information about your Pico.
 To send an updated WiFi settings file, run [remote\_picotool](../remote_picotool) with
 the IP address and the updated WiFi settings file, for example:
 ```
-    python remote_picotool --secret hunter2 update_reboot mywifisettings.txt
+python remote_picotool --secret hunter2 update_reboot mywifisettings.txt
 ```
 The file will be updated on the Pico and then the Pico will reboot (returning
 to your Pico application with the updated WiFi settings file).
@@ -73,20 +73,11 @@ to your Pico application with the updated WiFi settings file).
 # More than one Pico on the network
 
 If you have more than one Pico on your WiFi network, you will need to indicate
-which one should be updated. This can be done in several ways:
-
- - Use `--address <x.x.x.x>` to provide an IP address (or hostname).
- - Use `--id <x>` to provide all or part of the board ID (see below).
- - Use the environment variable `PICO_ADDRESS` to provide an IP address or hostname.
- - Use the environment variable `PICO_ID` to provide all or part of the board ID.
-
-For example:
+which one should be updated. This is done using a board ID or IP address,
+and there are several methods for specifying these. Here are two examples:
 ```
-    python remote_picotool --secret hunter2 --id 1718 info
-```
-or
-```
-    python remote_picotool --secret hunter2 --address 192.168.0.200 info
+python remote_picotool --secret hunter2 --id 1718 info
+python remote_picotool --secret hunter2 --address 192.168.0.200 info
 ```
 
 ## Board IDs, --id and the list command
@@ -95,7 +86,7 @@ To see a list of all devices on your network, you can use the `list` command
 to print the results of a UDP broadcast which triggers a response
 from all Pico devices with a pico-wifi-settings application:
 ```
-    python remote_picotool list
+python remote_picotool list
 ```
 The list shows the board ID and IP address of each Pico. You can use all or part
 of the board ID with the `--id` option in order to select a particular device;
@@ -123,15 +114,55 @@ The update secret can be provided in several ways:
 
  - Use `--secret` to provide the update secret on the command line.
  - Use the environment variable `PICO_UPDATE_SECRET`.
- - Use the contents of `$APPDATA/pico-wifi-settings-secret`.
- - Use the contents of `$XDG_CONFIG_HOME/pico-wifi-settings-secret`.
- - Use the contents of `~/.config/pico-wifi-settings-secret`.
+ - Use a `remote_picotool.cfg` file (see below).
  - Use the `update_secret=` line in the WiFi settings file that you provide
    when running an `update_reboot` or `update` command.
 
 If you wish to change the `update_secret=` value, you can do so by (1) putting the
 new value in the wifi-settings file, and (2) using the `--secret` option to provide the
 old value when running the `update_reboot` command.
+
+# remote\_picotool.cfg
+
+If you work with several different Pico W projects, it can be difficult
+to manage all of the board IDs and update secrets. Creating a `remote_picotool.cfg`
+file within each project can help with this.
+It is a text file similar to a wifi-settings file which is read
+by remote\_picotool on startup. It contains Pico-specific values for configuration
+options, for example:
+```
+update_secret=hunter2
+board_id=E6614854D3B51718
+```
+The following keys can be used in the file:
+
+ - `update_secret`
+ - `board_id`
+ - `board_address`
+ - `port`
+ - `search_timeout`
+ - `search_interface`
+
+The file should be created in the root of your source tree (e.g. Git repository).
+Whenever you run remote\_picotool, it will search all parent directories for
+remote\_picotool.cfg and load settings from the first file that it finds.
+In this way, each of your Pico projects can
+have its own configuration for remote access, and the remote\_picotool command
+can be used to update the wifi-settings file and the firmware via WiFi without
+any command-line options.
+
+Command-line options and environment
+variables will override remote\_picotool.cfg. If you are using Git,
+consider adding remote\_picotool.cfg to `.gitignore` in order to
+avoid committing your `update_secret`.
+
+You can also create a global remote\_picotool.cfg file in the following locations:
+
+ - `$APPDATA/remote_picotool.cfg`
+ - `$XDG_CONFIG_HOME/remote_picotool.cfg`
+ - `~/.config/remote_picotool.cfg`
+
+This will be used if no other remote\_picotool.cfg file can be found.
 
 # Over-the-air (OTA) firmware updates
 
@@ -149,7 +180,7 @@ are as follows:
 Provided that all of these requirements are met, an OTA update can be started by
 running:
 ```
-    python remote_picotool --secret hunter2 ota newfirmwarefile.uf2
+python remote_picotool --secret hunter2 ota newfirmwarefile.uf2
 ```
 The new firmware file must be in the `.bin` or `.uf2` format.
 
@@ -175,18 +206,78 @@ a problem by booting the older firmware. However, pico-wifi-settings doesn't sup
 this functionality yet, and will only use a single partition (whichever partition is
 currently in use).
 
-## Other features
+# Remote procedure calls into your firmware
+
+remote\_picotool can be used to call functions within your firmware, if they are registered
+as handlers by calling `wifi_settings_remote_set_handler()`. These calls are authenticated
+using `update_secret` and data can be sent and received. This could be useful as a
+general remote procedure call (RPC) system, allowing you to
+activate some application functionality remotely without needing to implement a network API.
+Here is an example of a handler function which dumps the value of a
+variable named `control_status`:
+```
+#include "wifi_settings.h"
+#define ID_GET_STATUS_HANDLER (ID_FIRST_USER_HANDLER + 0)
+
+static int32_t remote_handler_get_status(
+        uint8_t msg_type,
+        uint8_t* data_buffer,
+        uint32_t input_data_size,
+        int32_t input_parameter,
+        uint32_t* output_data_size,
+        void* arg) {
+
+    if (*output_data_size > sizeof(control_status)) {
+        *output_data_size = sizeof(control_status);
+    }
+    memcpy(data_buffer, &control_status, (size_t) *output_data_size);
+    return 0;
+}
+int main() {
+    ...
+    wifi_settings_remote_set_handler(ID_GET_STATUS_HANDLER, remote_handler_get_status, NULL);
+    ...
+}
+```
+A handler registered with `wifi_settings_remote_set_handler` can be called from Python
+by importing remote\_picotool as a Python module. To do this, create a symlink to `remote_picotool` with a `.py`
+extension, and then import the module from your Python program. Here is an example of
+a Python function which will connect to a Pico W board and run `remote_handler_get_status`:
+```
+import remote_picotool
+
+ID_GET_STATUS_HANDLER = remote_picotool.ID_FIRST_USER_HANDLER + 0
+
+async def remote_handler_get_status() -> bytes:
+    try:
+        config = remote_picotool.RemotePicotoolCfg()
+        reader, writer = await remote_picotool.get_pico_connection(config)
+        client = remote_picotool.Client(config.update_secret_hash, reader, writer)
+        (result_data, result_value) = await client.run(ID_GET_STATUS_HANDLER)
+        return result_data
+    finally:
+        writer.close()
+        await writer.wait_closed()
+```
+The board ID and update\_secret needed for access to Pico W will be taken from
+`remote_picotool.cfg` or from environment variables (`PICO_ID` and `PICO_UPDATE_SECRET`).
+To use command line parameters instead, call
+`remote_picotool.RemotePicotoolCfg.add_config_options()` to add the parameters to
+an `argparse.ArgumentParser` object and then pass the result of `parse_args` as
+a parameter when calling the `RemotePicotoolCfg` constructor.
+
+An example of the use of remote\_picotool as a Python module can be found in
+[the ventilation-system example project](https://github.com/jwhitham/ventilation-system):
+see `remote_status.py`.
+
+# Other remote\_picotool features
 
 With `-DWIFI_SETTINGS_REMOTE=2`,
 remote\_picotool can also reboot a Pico into bootloader
-mode. There is a feature to dump memory, which can be used with Flash or RAM, and there
-is a feature to reprogram blocks of Flash without doing a full OTA update.
+mode (`remote_picotool reboot_bootloader`).
+There is a feature to dump memory (`save`), which can be used with Flash or RAM, and there
+is a feature to reprogram blocks of Flash outside of the current program (`load`).
 
-remote\_picotool can be used to call functions within an application, if they are registered
-as handlers by calling `wifi_settings_remote_set_handler`. These calls are authenticated
-using `update_secret`, and data can be sent and received. This could be useful as a
-general remote procedure call (RPC) system, allowing you to
-activate some application functionality remotely without needing to implement a network API.
 
 # Technical notes
 

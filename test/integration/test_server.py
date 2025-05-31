@@ -213,7 +213,9 @@ class Server(remote_picotool.AbstractCommunication):
 
 async def create_server(handlers: typing.Dict[int, HandlerCallback]) -> typing.Tuple[asyncio.base_events.Server, int]:
     server: typing.List[asyncio.Server] = []
-    update_secret_hash = remote_picotool.get_update_secret_from_str(UPDATE_SECRET)
+    config = remote_picotool.RemotePicotoolCfg(argparse.Namespace())
+    config.set("update_secret", UPDATE_SECRET)
+    update_secret_hash = config.update_secret_hash
 
     async def serve_callback(reader: StreamReader, writer: StreamWriter) -> None:
         try:

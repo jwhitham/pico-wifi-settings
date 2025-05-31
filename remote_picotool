@@ -31,6 +31,7 @@ PORT_NUMBER =               1404
 RESPONDER_REQUEST_MAGIC =  b"PWS?"
 RESPONDER_REPLY_MAGIC =    b"PWS:"
 BOARD_ID_SIZE =             8 
+REMOTE_PICOTOOL_CFG_NAME =  "remote_picotool.cfg"
 
 CHALLENGE_SIZE =            15
 AUTHENTICATION_SIZE =       15
@@ -221,17 +222,17 @@ class NoSecretError(RemoteError):
     pass
 
 class AbstractCommunication:
-    def __init__(self, update_secret: bytes,
+    def __init__(self, update_secret_hash: bytes,
             reader: StreamReader, writer: StreamWriter) -> None:
         self.reader = reader
         self.writer = writer
-        self.update_secret = update_secret
+        self.update_secret_hash = update_secret_hash
         self.enc_receive: typing.Optional[pyaes.aes.AESModeOfOperationCBC] = None
         self.enc_transmit: typing.Optional[pyaes.aes.AESModeOfOperationCBC] = None
 
     def gen_auth(self, session_data: bytes) -> bytes:
         """Generate authentication code from secret and session data."""
-        return hmac.HMAC(key=self.update_secret, msg=session_data,
+        return hmac.HMAC(key=self.update_secret_hash, msg=session_data,
                     digestmod=hashlib.sha256).digest()
 
     def get_data_hash(self, data: bytes, header: bytes) -> bytes:
@@ -517,7 +518,9 @@ class Client(AbstractCommunication):
             raise UnknownError()
 
 class KeyValueStore:
-    """Represents a key=value store such as the wifi-settings file or data from ID_PICO_INFO_HANDLER."""
+    """Represents a key=value store such as the wifi-settings file.
+
+    KeyValueStore is also used for remote_picotool.cfg and ID_PICO_INFO_HANDLER data."""
 
     END_OF_LINE_BYTES = b"\r\n\x00\xff\x1b"
 
@@ -549,7 +552,12 @@ class KeyValueStore:
         return (key_index, value_index, end_index)
 
     def get(self, key: str, errors: str = "ignore") -> typing.Optional[str]:
-        """Get a value for a key or return None"""
+        """Get a value for a key or return None.
+
+        The encoding for values is UTF-8. The errors parameter
+        is passed to the decode() function to specify how invalid UTF-8
+        characters should be handled e.g. "ignore", "strict", "replace".
+        """
         found = self.find_index(key)
         if not found:
             return None
@@ -571,7 +579,7 @@ class KeyValueStore:
             while ((end_index < len(self.contents))
             and (self.contents[end_index] in self.END_OF_LINE_BYTES)):
                 end_index += 1
-            self.contents = self.contents[key_index:] + self.contents[end_index:]
+            self.contents = self.contents[:key_index] + self.contents[end_index:]
             # Search again
             found = self.find_index(key)
 
@@ -581,7 +589,24 @@ class KeyValueStore:
         self.crop()
         self.contents = (key + "=" + value + "\n").encode("utf-8") + self.contents
 
+    def get_float(self, key: str, default_value: float = 0.0) -> float:
+        """Get the value of a key as a float.
+
+        If the value isn't defined, or can't be converted to a float, default_value is returned.
+        """
+        value = self.get(key)
+        if value is None:
+            return default_value
+        try:
+            return float(value)
+        except ValueError:
+            return default_value
+
     def get_int(self, key: str, default_value: int = 0) -> int:
+        """Get the value of a key as an int.
+
+        If the value isn't defined, or can't be converted to an int, default_value is returned.
+        """
         value = self.get(key)
         if value is None:
             return default_value
@@ -591,6 +616,10 @@ class KeyValueStore:
             return default_value
 
     def get_str(self, key: str, default_value: str = "") -> str:
+        """Get the value of a key as a string.
+
+        If the value isn't defined, default_value is returned.
+        """
         value = self.get(key)
         if value is None:
             return default_value
@@ -598,6 +627,10 @@ class KeyValueStore:
             return value
 
     def get_range(self, key: str) -> FlashRange:
+        """Get the value of a key as a FlashRange <x>:<y>.
+
+        If the value isn't defined, (0, 0) is returned.
+        """
         value = self.get(key)
         if value is None:
             return (0, 0)
@@ -701,59 +734,49 @@ class PicoInfo(KeyValueStore):
             "RP2350": Family.RP2350_ARM_S,
         }.get(self.type_name, Family.UNKNOWN)
 
-async def get_pico_connection(args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
-    """Connect to a Pico, determining the address and port from
-    command-line options or the environment.
+async def get_pico_connection(config: "RemotePicotoolCfg") -> typing.Tuple[StreamReader, StreamWriter]:
+    """Connect to a Pico, determining the board ID or address from the configuration.
 
-    Implements:
+    There are many ways to specify the board ID or address. For example,
      - Use `--address <x.x.x.x>` to provide an IP address or hostname.
      - Use `--id <x>` to provide all or part of the board ID (see below).
      - Use the environment variable `PICO_ADDRESS` to provide an IP address or hostname.
      - Use the environment variable `PICO_ID` to provide all or part of the board ID.
+     - Use `board_address=<x.x.x.x>in the remote_picotool.cfg file.
+     - Use `board_id=<x>` in the remote_picotool.cfg file.
     """
 
-    if args.address:
-        # Command-line --address option provided
-        return await get_pico_connection_for_address(args.address, args)
+    if config.board_address:
+        return await get_pico_connection_for_address(config.board_address, config)
 
-    if args.id:
-        # Command-line --id option provided
-        return await get_pico_connection_for_board_id(args.id, args)
-
-    # Try environment variables
-    address = os.getenv("PICO_ADDRESS", "")
-    if address:
-        return await get_pico_connection_for_address(address, args)
-
-    board_id = os.getenv("PICO_ID", "")
-    if board_id:
-        return await get_pico_connection_for_board_id(board_id, args)
+    if config.board_id:
+        return await get_pico_connection_for_board_id(config.board_id, config)
 
     # No address provided, no ID provided? Hopefully there is only one board on the network!
-    return await get_pico_connection_for_board_id(None, args)
+    return await get_pico_connection_for_board_id(None, config)
 
 async def get_pico_connection_for_address(
         address: str,
-        args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
+        config: "RemotePicotoolCfg") -> typing.Tuple[StreamReader, StreamWriter]:
     """Connect to a Pico at a specified address with a port from the command line."""
-    return await asyncio.open_connection(address, args.port)
+    return await asyncio.open_connection(address, config.port)
 
 async def get_pico_connection_for_board_id(
         board_id: typing.Optional[str],
-        args: argparse.Namespace) -> typing.Tuple[StreamReader, StreamWriter]:
+        config: "RemotePicotoolCfg") -> typing.Tuple[StreamReader, StreamWriter]:
     """Connect to a Pico at a specified address with a port from the command line."""
-    address = await get_pico_address_for_board_id(board_id, args)
-    return await get_pico_connection_for_address(address, args)
+    address = await get_pico_address_for_board_id(board_id, config)
+    return await get_pico_connection_for_address(address, config)
 
 async def get_pico_address_for_board_id(
         board_id: typing.Optional[str],
-        args: argparse.Namespace) -> str:
+        config: "RemotePicotoolCfg") -> str:
     """Get a Pico IP address by searching for a board.
 
     See get_list_of_boards_for_board_id for information about the search.
     This function restricts the search to finding only one board."""
 
-    matches = await get_list_of_boards_for_board_id(board_id, args)
+    matches = await get_list_of_boards_for_board_id(board_id, config)
     if len(matches) == 0:
         raise RemoteError(f"No Pico W devices responded to the board id search '{board_id}'")
     if len(matches) != 1:
@@ -763,7 +786,7 @@ async def get_pico_address_for_board_id(
     return list(matches.keys())[0]
 
 async def get_list_of_boards_for_board_id(board_id: typing.Optional[str],
-        args: argparse.Namespace) -> typing.Dict[str, str]:
+        config: "RemotePicotoolCfg") -> typing.Dict[str, str]:
     """Get a list of boards that match a given id.
 
     This is done by broadcasting a UDP packet containing a request,
@@ -787,7 +810,7 @@ async def get_list_of_boards_for_board_id(board_id: typing.Optional[str],
         raise LocalError(f"The board --id parameter must be a hex value with up to {BOARD_ID_SIZE * 2} digits")
 
     # Find a network interface to be used for the search.
-    search_interface = args.search_interface
+    search_interface = config.search_interface
     if not search_interface:
         # Determine which network interface is used for the default route, by considering what
         # happens if we wish to send a packet to an address on the Internet (e.g. "1.0.0.0").
@@ -840,9 +863,9 @@ async def get_list_of_boards_for_board_id(board_id: typing.Optional[str],
         protocol_factory=ReceivedBoardIDProtocol, sock=s)
 
     # Transmit the request
-    transport.sendto(request, addr=(broadcast, args.port))
+    transport.sendto(request, addr=(broadcast, config.port))
     # Await replies
-    await asyncio.sleep(args.search_timeout)
+    await asyncio.sleep(config.search_timeout)
     transport.close()
     # Return a mapping of { address -> board_id }
     return matches
@@ -1053,66 +1076,257 @@ class UF2FileReader(FileReader):
                 raise LocalError(
                     f"The UF2 file doesn't contain any blocks with the expected family {self.family.name}")
 
+class RemotePicotoolCfg(KeyValueStore):
+    """This represents a remote_picotool configuration, from a file, or parameters, or both."""
 
-def get_update_secret(args: argparse.Namespace) -> bytes:
-    """Get the update secret
+    def __init__(self, args: typing.Optional[argparse.Namespace] = None) -> None:
+        """Get the remote_picotool configuration contents.
 
-    Implements:
-     - Use the command-line option `--secret` (if provided)
-     - Use the environment variable `PICO_UPDATE_SECRET` (if set)
-     - Use the contents of file $APPDATA/pico-wifi-settings-secret (if it exists)
-     - Use the contents of file $XDG_CONFIG_HOME/pico-wifi-settings-secret (if it exists)
-     - Use the contents of file ~/.config/pico-wifi-settings-secret (if it exists)
-     - Use the WiFi settings file that you provide (if any)
-    """
-    secret = ""
-    if args.secret:
-        # Command-line option provided
-        secret = args.secret
+        This may be loaded from a file. The file is named remote_picotool.cfg and
+        may specify the update_secret, the board ID and the IP address,
+        avoiding any need to specify these settings when running remote_picotool.
 
-    # Try environment variable
-    if not secret:
-        secret = os.getenv("PICO_UPDATE_SECRET", "")
+        In particular you can create a remote_picotool.cfg file in the root
+        of your Git repository and it will be used whenever you run remote_picotool
+        within the Git repository.
 
-    # Try to use the contents of a secret file
-    if not secret:
-        config_dir = (os.getenv("APPDATA", "") or os.getenv("XDG_CONFIG_HOME", "")
-                            or str(Path().home() / ".config"))
-        if config_dir:
-            config_file = Path(config_dir) / "pico-wifi-settings-secret"
-            if config_file.is_file():
-                secret = config_file.read_text("utf-8").rstrip()
+        The following places are searched for the file, in this order:
+         - Use the command-line option `--config` (if provided)
+         - Use the environment variable `PICO_REMOTE_PICOTOOL_CFG` (if set)
+         - Use the contents of file `remote_picotool.cfg` in the current directory (if it exists)
+         - Use the contents of file `remote_picotool.cfg` in any parent directory (if it exists)
+         - Use the contents of file `$APPDATA/remote_picotool.cfg` (if it exists)
+         - Use the contents of file `$XDG_CONFIG_HOME/remote_picotool.cfg` (if it exists)
+         - Use the contents of file `~/.config/remote_picotool.cfg` (if it exists)
 
-    # If neither was provided, how about the wifi-settings file?
-    if ((not secret) and hasattr(args, "filename")
-    and (get_file_type(args.filename) == FileType.WIFI_SETTINGS)):
-        # Load secret from file
-        store = KeyValueStore(args.filename.read_bytes())
-        secret = store.get_str("update_secret")
+        A priority order is applied for all parameters:
+         - The command-line option overrides everything
+         - Special case 1: an environment variable is used if defined (e.g. PICO_ID for --board-id)
+         - Special case 2: update_secret can be loaded from a wifi-settings file if one is specified
+         - The value is taken from the the `remote_picotool.cfg` file
+         - A default value is used e.g. 1404 for --port
+        """
+        KeyValueStore.__init__(self, b"")
 
-    if not secret:
-        raise NoSecretError("No update_secret is available for the client (use --secret)")
+        # Use the command-line parameters provided by the caller, if any
+        # The static method add_config_options() will add the options to an ArgumentParser object
+        if args is None:
+            args = argparse.Namespace()
+        self.args = args
 
-    return get_update_secret_from_str(secret)
+        # Get the config file location from the environment or from the command line if possible
+        self.override_from_environment("config", "PICO_REMOTE_PICOTOOL_CFG")
+        self.override_from_args("config")
 
-def get_update_secret_from_str(secret: str) -> bytes:
-    """Turn the secret provided by the user into a 32-byte hash."""
-    secret_hash = b"\x00" * 32
-    secret_bytes = secret.encode("utf-8")
-    for i in range(4096):
-        secret_hash = hashlib.sha256(secret_hash + secret_bytes).digest()
+        # If the config file location is not known then search current directory and parents
+        if not self.config:
+            ancestor_dir = Path.cwd()
+            while ancestor_dir != ancestor_dir.parent:
+                config_file = ancestor_dir / REMOTE_PICOTOOL_CFG_NAME
+                if config_file.is_file():
+                    self.set("config", str(config_file))
+                    break
+                ancestor_dir = ancestor_dir.parent
 
-    return secret_hash
+        # If the config file location is not known then search home directory locations
+        if not self.config:
+            config_dir = (os.getenv("APPDATA", "") or os.getenv("XDG_CONFIG_HOME", "")
+                                 or str(Path.home() / ".config"))
+            if config_dir:
+                config_file = Path(config_dir) / REMOTE_PICOTOOL_CFG_NAME
+                if config_file.is_file():
+                    self.set("config", str(config_file))
+
+        # Set defaults
+        self.set("port", str(PORT_NUMBER))
+        self.set("search_timeout", "0.5")
+
+        # Read file contents if any file was found
+        # They are prepended so that new settings override whatever was found so far
+        if self.config:
+            self.contents = Path(self.config).read_bytes() + b"\n" + self.contents
+
+        # Special case 1: Override some settings from environment variables (if specified)
+        self.override_from_environment("update_secret", "PICO_UPDATE_SECRET")
+        self.override_from_environment("board_address", "PICO_ADDRESS")
+        self.override_from_environment("board_id", "PICO_ID")
+
+        # Special case 2: The update secret might also be loaded from a wifi-settings file
+        if (not self.update_secret_text
+        and hasattr(self.args, "filename")
+        and (get_file_type(self.args.filename) == FileType.WIFI_SETTINGS)):
+            self.set("update_secret", WifiSettingsFile(self.args.filename.read_bytes()).update_secret_text)
+
+        # Override all settings from the command line options (if specified)
+        self.override_from_args("port")
+        self.override_from_args("search_timeout")
+        self.override_from_args("search_interface")
+        self.override_from_args("update_secret")
+        self.override_from_args("board_address")
+        self.override_from_args("board_id")
+
+    @staticmethod
+    def add_config_options(parser: argparse.ArgumentParser) -> None:
+        """Add command-line options to a parser.
+
+        This method can be used to create a tool which accepts the same
+        configuration options as remote_picotool but has custom commands."""
+        parser.add_argument("--port",
+            type=int,
+            metavar="N",
+            help="Port number")
+        parser.add_argument("--search-timeout",
+            type=float,
+            metavar="SECONDS",
+            help="Timeout for search when the target address is not specified")
+        parser.add_argument("--search-interface",
+            type=str,
+            metavar="A.B.C.D",
+            help="IP address of local interface to be used for search when the target address is not specified")
+        parser.add_argument("--update-secret", "--secret",
+            type=str,
+            metavar="PASSPHRASE",
+            help="Shared secret (configured as update_secret in the WiFi settings file)")
+        parser.add_argument("--board-address", "--address",
+            type=str,
+            metavar="A.B.C.D",
+            help="Target address for Pico W (IP or hostname)")
+        parser.add_argument("--board-id", "--id",
+            type=str,
+            metavar="ID",
+            help="Target board ID (may be partial)")
+        parser.add_argument("--config",
+            type=Path,
+            metavar="CFG",
+            help="Configuration file for remote_picotool containing one or more of "
+                 "the preceding options, e.g. board_id=... or update_secret=...")
+
+    def override_from_environment(self, key: str, env_var_name: str) -> None:
+        """Override an option setting from an environment variable, if the env var exists."""
+        value = os.getenv(key, "")
+        if value:
+            self.set(key, value)
+
+    def override_from_args(self, key: str) -> None:
+        """Override an option setting from a command-line option, if the option was used."""
+        if hasattr(self.args, key):
+            value = getattr(self.args, key, None)
+            if value is not None:
+                self.set(key, str(value))
+
+    @property
+    def config(self) -> str:
+        """Location of remote_picotool.cfg file (if any).
+
+        This is:
+         - the --config option on the command line
+         - the environment variable PICO_REMOTE_PICOTOOL_CFG
+         - various search locations on disk
+        """
+        return self.get_str("config")
+
+    @property
+    def port(self) -> int:
+        """Port number for connecting to Pico W.
+
+        This is:
+         - the port= option in remote_picotool.cfg
+         - the --port option on the command line
+        """
+        return self.get_int("port")
+
+    @property
+    def search_timeout(self) -> float:
+        """Timeout for searching for Pico W (seconds).
+
+        This is:
+         - the search_timeout= option in remote_picotool.cfg
+         - the --search-timeout option on the command line
+        """
+        return self.get_float("search_timeout")
+
+    @property
+    def search_interface(self) -> str:
+        """IPv4 address of interface for searching for Pico W.
+
+        This is:
+         - the search_interface= option in remote_picotool.cfg
+         - the --search-interface option on the command line
+        """
+        return self.get_str("search_interface")
+
+    @property
+    def update_secret_text(self) -> str:
+        """Update secret as text.
+
+        This is:
+         - the update_secret= option in remote_picotool.cfg (or the wifi-settings file)
+         - the --update-secret or --secret option on the command line
+         - the environment variable PICO_UPDATE_SECRET
+        """
+        return self.get_str("update_secret")
+
+    @property
+    def board_address(self) -> str:
+        """IPv4 address of Pico W.
+
+        This is:
+         - the board_address= option in remote_picotool.cfg
+         - the --board-address or --address option on the command line
+         - the environment variable PICO_ADDRESS
+        """
+        return self.get_str("board_address")
+
+    @property
+    def board_id(self) -> str:
+        """Board ID of Pico W.
+
+        This is:
+         - the board_id= option in remote_picotool.cfg
+         - the --board-id or --id option on the command line
+         - the environment variable PICO_ID
+        """
+        return self.get_str("board_id")
+
+    @property
+    def update_secret_hash(self) -> bytes:
+        """Turn the secret provided by the user into a 32-byte hash.
+
+        This is derived from:
+         - the update_secret= option in remote_picotool.cfg (or the wifi-settings file)
+         - the --update-secret or --secret option on the command line
+         - the environment variable PICO_UPDATE_SECRET
+        """
+
+        if not self.update_secret_text:
+            raise NoSecretError("No update_secret is available for the client (use --secret)")
+
+        secret_hash = b"\x00" * 32
+        secret_bytes = self.update_secret_text.encode("utf-8")
+        for i in range(4096):
+            secret_hash = hashlib.sha256(secret_hash + secret_bytes).digest()
+
+        return secret_hash
+
+
+class WifiSettingsFile(KeyValueStore):
+    """This represents information in a wifi-settings file."""
+
+    @property
+    def update_secret_text(self) -> str:
+        """Update secret as text."""
+        return self.get_str("update_secret")
 
 def subcommand_info(args: argparse.Namespace) -> None:
     """Print information gathered from a device that is running pico-wifi-settings.""" 
-    update_secret = get_update_secret(args)
+    config = RemotePicotoolCfg(args)
+    update_secret_hash = config.update_secret_hash
     pico_info = PicoInfo()
 
     async def run() -> None:
         try:
-            reader, writer = await get_pico_connection(args)
-            await pico_info.load(Client(update_secret, reader, writer))
+            reader, writer = await get_pico_connection(config)
+            await pico_info.load(Client(update_secret_hash, reader, writer))
         finally:
             try:
                 writer.close()
@@ -1165,6 +1379,7 @@ class UpdateRebootMode(enum.Enum):
     REBOOT_BOOTLOADER = enum.auto()
 
 def subcommand_update_reboot(args: argparse.Namespace) -> None:
+    config = RemotePicotoolCfg(args)
     mode = typing.cast(UpdateRebootMode, args.mode)
 
     request_data = b""
@@ -1187,13 +1402,13 @@ def subcommand_update_reboot(args: argparse.Namespace) -> None:
     if mode == UpdateRebootMode.REBOOT_BOOTLOADER:
         parameter = 1
 
-    update_secret = get_update_secret(args)
+    update_secret_hash = config.update_secret_hash
 
     async def run() -> None:
         try:
-            reader, writer = await get_pico_connection(args)
+            reader, writer = await get_pico_connection(config)
             (result_data, result_value) = await Client(
-                update_secret, reader, writer).run(
+                update_secret_hash, reader, writer).run(
                     handler_id=msg_type,
                     request_data=request_data,
                     parameter=parameter)
@@ -1230,7 +1445,8 @@ def subcommand_update_reboot(args: argparse.Namespace) -> None:
     asyncio.run(run())
 
 def subcommand_save(args: argparse.Namespace) -> None:
-    update_secret = get_update_secret(args)
+    config = RemotePicotoolCfg(args)
+    update_secret_hash = config.update_secret_hash
 
     # Sanity check for the file type
     file_type = get_file_type(args.filename)
@@ -1245,8 +1461,8 @@ def subcommand_save(args: argparse.Namespace) -> None:
 
     async def run() -> None:
         try:
-            reader, writer = await get_pico_connection(args)
-            client = Client(update_secret, reader, writer)
+            reader, writer = await get_pico_connection(config)
+            client = Client(update_secret_hash, reader, writer)
 
             # Get the Pico info first, in order to know enough about the program and Flash memory
             pico_info = PicoInfo()
@@ -1419,12 +1635,13 @@ async def do_load(client: Client, filename: Path,
 
 
 def subcommand_load(args: argparse.Namespace) -> None:
-    update_secret = get_update_secret(args)
+    config = RemotePicotoolCfg(args)
+    update_secret_hash = config.update_secret_hash
 
     async def run() -> None:
         try:
-            reader, writer = await get_pico_connection(args)
-            client = Client(update_secret, reader, writer)
+            reader, writer = await get_pico_connection(config)
+            client = Client(update_secret_hash, reader, writer)
 
             await do_load(client, args.filename, args.offset, False)
 
@@ -1438,12 +1655,13 @@ def subcommand_load(args: argparse.Namespace) -> None:
     asyncio.run(run())
 
 def subcommand_ota(args: argparse.Namespace) -> None:
-    update_secret = get_update_secret(args)
+    config = RemotePicotoolCfg(args)
+    update_secret_hash = config.update_secret_hash
 
     async def run() -> None:
         try:
-            reader, writer = await get_pico_connection(args)
-            client = Client(update_secret, reader, writer)
+            reader, writer = await get_pico_connection(config)
+            client = Client(update_secret_hash, reader, writer)
 
             # Load the data into Flash
             (copy_to_offset, file_reader) = await do_load(client, args.filename, None, True)
@@ -1472,8 +1690,10 @@ def subcommand_ota(args: argparse.Namespace) -> None:
     asyncio.run(run())
 
 def subcommand_list(args: argparse.Namespace) -> None:
+    config = RemotePicotoolCfg(args)
+
     async def run() -> None:
-        matches = await get_list_of_boards_for_board_id(args.id, args)
+        matches = await get_list_of_boards_for_board_id(config.board_id, config)
 
         for (address, board_id) in sorted(matches.items()):
             print(f"{address:15s} {board_id}")
@@ -1501,33 +1721,8 @@ def main() -> None:
             "are running firmware with wifi-settings and an update_secret is configured. "
             "Subcommands marked with [*] also require building with -DWIFI_SETTINGS_REMOTE=2. "
             "See " + URL + " for instructions.")
-    parser.add_argument("--port",
-        type=int,
-        metavar="N",
-        help="Port number",
-        default=PORT_NUMBER)
-    parser.add_argument("--search-timeout",
-        type=float,
-        metavar="SECONDS",
-        help="Timeout for search when the target address is not specified",
-        default=0.5)
-    parser.add_argument("--search-interface",
-        type=str,
-        metavar="A.B.C.D",
-        help="IP address of local interface to be used for search when the target address is not specified",
-        default='')
-    parser.add_argument("--secret",
-        type=str,
-        metavar="PASSPHRASE",
-        help="Shared secret (configured as update_secret in the WiFi settings file)")
-    parser.add_argument("--address",
-        type=str,
-        metavar="A.B.C.D",
-        help="Target address for Pico W (IP or hostname)")
-    parser.add_argument("--id",
-        type=str,
-        metavar="ID",
-        help="Target board ID (may be partial)")
+
+    RemotePicotoolCfg.add_config_options(parser)
 
     subparser = parser.add_subparsers(required=True,
             description="Use remote_picotool <subcommand> --help for more details:")
@@ -1601,8 +1796,8 @@ def main() -> None:
     except LocalError as e:
         print("Error:", str(e))
         sys.exit(1)
-    #except KeyboardInterrupt:
-    #    sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

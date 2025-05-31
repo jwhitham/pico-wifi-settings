@@ -96,8 +96,8 @@ There is an [integration guide which explains what you need to do
 to add pico-wifi-settings to your application](doc/INTEGRATION.md).
 
 You can also look at [a simple example of pico-wifi-settings](example) with about 150
-lines of C code, or the more complex [setup application](doc/SETUP_APP.md)
-[source code](setup).
+lines of C code or
+[a real IoT project using Pico W](https://github.com/jwhitham/ventilation-system).
 
 # Where this came from
 

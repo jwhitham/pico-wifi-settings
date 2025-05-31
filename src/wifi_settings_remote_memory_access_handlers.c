@@ -320,12 +320,12 @@ void wifi_settings_ota_firmware_update_handler2(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t callback1_data_size,
-        int32_t callback1_parameter,
+        int32_t callback1_return,
         void* arg) {
 
     // update was previously verified by handler1
-    if (callback1_parameter != 0) {
-        return; // should be unreachable (checked by handler1)
+    if (callback1_return != 0) {
+        return; // error was detected by handler1
     }
 
     // load parameters (verified now)

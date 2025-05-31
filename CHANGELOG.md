@@ -2,6 +2,14 @@
 
 This documents important changes in the project.
 
+## v0.3.0
+
+New configuration system for remote\_picotool
+    
+- add `remote_picotool.cfg` support, allowing a per-project configuration for updating Pico devices
+- remove the previous `pico-wifi-settings-secret` file
+- fix a bug in `KeyValueStore.discard()` which caused an infinite loop
+
 ## v0.2.2
 
 - Fix a bug with `remote_picotool reboot` which would corrupt
