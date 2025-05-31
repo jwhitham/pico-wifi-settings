@@ -73,19 +73,10 @@ to your Pico application with the updated WiFi settings file).
 # More than one Pico on the network
 
 If you have more than one Pico on your WiFi network, you will need to indicate
-which one should be updated. This can be done in several ways:
-
- - Use `--address <x.x.x.x>` to provide an IP address (or hostname).
- - Use `--id <x>` to provide all or part of the board ID (see below).
- - Use the environment variable `PICO_ADDRESS` to provide an IP address or hostname.
- - Use the environment variable `PICO_ID` to provide all or part of the board ID.
-
-For example:
+which one should be updated. This is done using a board ID or IP address,
+and there are several methods for specifying these. Here are two examples:
 ```
     python remote_picotool --secret hunter2 --id 1718 info
-```
-or
-```
     python remote_picotool --secret hunter2 --address 192.168.0.200 info
 ```
 
@@ -123,15 +114,42 @@ The update secret can be provided in several ways:
 
  - Use `--secret` to provide the update secret on the command line.
  - Use the environment variable `PICO_UPDATE_SECRET`.
- - Use the contents of `$APPDATA/pico-wifi-settings-secret`.
- - Use the contents of `$XDG_CONFIG_HOME/pico-wifi-settings-secret`.
- - Use the contents of `~/.config/pico-wifi-settings-secret`.
+ - Use a `remote_picotool.cfg` file (see below).
  - Use the `update_secret=` line in the WiFi settings file that you provide
    when running an `update_reboot` or `update` command.
 
 If you wish to change the `update_secret=` value, you can do so by (1) putting the
 new value in the wifi-settings file, and (2) using the `--secret` option to provide the
 old value when running the `update_reboot` command.
+
+# remote\_picotool.cfg
+
+If you work with several different Pico W projects, it can be difficult
+to manage all of the board IDs and update secrets. Creating a `remote\_picotool.cfg`
+will be helpful. This is a text file similar to a wifi-settings file which is read
+by remote\_picotool on startup. It may contain one or more of the following:
+
+ - `update_secret`
+ - `board_id`
+ - `board_address`
+ - `port`
+ - `search_timeout`
+ - `search_interface`
+
+The file should be created in the root of your source tree (e.g. Git repository).
+Whenever you run remote\_picotool, it will search all parent directories for
+remote\_picotool.cfg and load settings. In this way, each of your Pico projects can
+have its own configuration for remote access. Command-line options and environment
+variables will override remote\_picotool.cfg. (Don't forget to use `.gitignore` to
+avoid committing your `update_secret`.)
+
+You can also create a global remote\_picotool.cfg file in the following locations:
+
+ - `$APPDATA/remote_picotool.cfg`
+ - `$XDG_CONFIG_HOME/remote_picotool.cfg`
+ - `~/.config/remote_picotool.cfg`
+
+This will be used if no other remote\_picotool.cfg file can be found.
 
 # Over-the-air (OTA) firmware updates
 

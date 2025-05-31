@@ -9,3 +9,4 @@ __pycache__
 *.bin
 /release
 bazel-*
+remote_picotool.cfg
