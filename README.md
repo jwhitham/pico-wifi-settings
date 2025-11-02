@@ -95,9 +95,12 @@ You can integrate pico-wifi-settings into your own Pico application with just a 
 There is an [integration guide which explains what you need to do
 to add pico-wifi-settings to your application](doc/INTEGRATION.md).
 
-You can also look at [a simple example of pico-wifi-settings](example) with about 150
-lines of C code or
-[a real IoT project using Pico W](https://github.com/jwhitham/ventilation-system).
+You can also look at some examples:
+ - [a simple example](example) that doesn't do very much (about 150 lines of C code)
+ - [ventilation-system](https://github.com/jwhitham/ventilation-system) controller,
+   a real-world IoT project in use at my house (about 760 lines)
+ - [towel-rail-system](https://github.com/jwhitham/towel-rail-system) controller,
+   another real project (about 600 lines)
 
 # Where this came from
 
