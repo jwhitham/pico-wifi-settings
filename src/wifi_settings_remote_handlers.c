@@ -292,6 +292,7 @@ void wifi_settings_update_reboot_handler2(
         }
 
         // update
+        watchdog_disable();
         wifi_settings_update_flash_unsafe((const char*) data_buffer, (uint) callback1_data_size);
     }
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS

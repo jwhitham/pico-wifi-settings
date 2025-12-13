@@ -302,9 +302,24 @@ int32_t wifi_settings_ota_firmware_update_handler1(
     mbedtls_sha256_init(&ctx);
     uint8_t digest_data[WIFI_SETTINGS_OTA_HASH_SIZE];
 
-    if ((0 != mbedtls_sha256_starts(&ctx, 0))
-    || (0 != mbedtls_sha256_update(&ctx, copy_from_lr.start_address, copy_from_lr.size))
-    || (0 != mbedtls_sha256_finish(&ctx, digest_data))) {
+    if (0 != mbedtls_sha256_starts(&ctx, 0)) {
+        return PICO_ERROR_GENERIC;
+    }
+    uint32_t left_to_check = copy_from_lr.size;
+    uint8_t* check_address = (uint8_t*) copy_from_lr.start_address;
+    while (left_to_check != 0)
+    {
+        // Process one block at a time, because of the need to periodically update a watchdog
+        // if the user's firmware has enabled it.
+        watchdog_update();
+        uint32_t block_size = (left_to_check > FLASH_BLOCK_SIZE) ? FLASH_BLOCK_SIZE : left_to_check;
+        if (0 != mbedtls_sha256_update(&ctx, check_address, block_size)) {
+            return PICO_ERROR_GENERIC;
+        }
+        left_to_check -= block_size;
+        check_address += block_size;
+    }
+    if (0 != mbedtls_sha256_finish(&ctx, digest_data)) {
         return PICO_ERROR_GENERIC;
     }
     mbedtls_sha256_free(&ctx);

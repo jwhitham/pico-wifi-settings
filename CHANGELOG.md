@@ -2,6 +2,11 @@
 
 This documents important changes in the project.
 
+## v0.3.1
+
+- Fix a bug affecting OTA updates when user code has enabled the watchdog due to the long
+  time needed to verify an update with SHA-256
+
 ## v0.3.0
 
 New configuration system for remote\_picotool
