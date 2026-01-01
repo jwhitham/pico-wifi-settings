@@ -3,7 +3,7 @@
 # 
 #  SPDX-License-Identifier: BSD-3-Clause
 # 
-#  This header file contains default values for timeouts
+#  This module contains default values for timeouts
 #  and limits within the pico-wifi-settings library.
 # 
 #
@@ -26,3 +26,6 @@ PERIODIC_TIME_MS = 1000
 # Maximum number of SSIDs that can be supported. This determines the size
 # of the g_wifi_state.ssid_scan_info list.
 MAX_NUM_SSIDS = 100
+
+# wifi-settings file name
+WIFI_SETTINGS_FILE_NAME = "/wifi-settings-file"
