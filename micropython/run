@@ -1,7 +1,8 @@
 #!/bin/bash -xe
 
 test -d wifi_settings
+python -m mypy example.py
 rm -rf wifi_settings/__pycache__
 rm -rf wifi_settings/.mypy_cache
 mpremote cp -r wifi_settings wifi.cfg :/
-mpremote cp example.py :/boot.py
+mpremote cp example.py :/example.py

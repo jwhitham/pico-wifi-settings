@@ -10,8 +10,6 @@
 
 from . import storage, configuration
 
-import enum
-
 # Type-checking
 try:
     import typing
@@ -23,12 +21,12 @@ import machine # type: ignore
 import micropython # type: ignore
 from time import ticks_add, ticks_ms, ticks_diff # type: ignore
 
-class SSIDType(enum.Enum):
+class SSIDType:
     NONE = 0
     BSSID = 1
     SSID = 2
 
-class ConnectState(enum.Enum):
+class ConnectState:
     UNINITIALISED = 0           # cyw43 hardware was not started
     INITIALISATION_ERROR = 1    # initialisation failed
     STORAGE_EMPTY_ERROR = 2     # no WiFi details are known
@@ -38,7 +36,7 @@ class ConnectState(enum.Enum):
     CONNECTING = 6              # connection running
     CONNECTED_IP = 7            # connection is ready for use
 
-class SSIDScanInfo(enum.Enum):
+class SSIDScanInfo:
     NOT_FOUND = 0               # this SSID was not found
     FOUND = 1                   # this SSID was found by the most recent scan
     ATTEMPT = 2                 # we attempted to connect to this SSID
@@ -48,7 +46,7 @@ class SSIDScanInfo(enum.Enum):
     SUCCESS = 6                 # ... and it worked
     LOST = 7                    # we connected to this SSID but the connection dropped
 
-class Cyw43LinkStatus(enum.Enum):
+class Cyw43LinkStatus:
     CYW43_LINK_DOWN = 0
     CYW43_LINK_JOIN = 1
     CYW43_LINK_NOIP = 2
@@ -70,6 +68,15 @@ class WiFiState:
     timer: typing.Any = None
 
 g_wifi_state = WiFiState()
+
+def __enum_value_to_name(enum_class: type, value: int) -> typing.Optional[str]:
+    """Internal: convert an enum value (int) to a name.
+
+    Micropython doesn't currently have the enum package."""
+    for name in dir(enum_class):
+        if value is getattr(enum_class, name):
+            return name
+    return None
 
 def has_no_wifi_details() -> bool:
     """Determine if the WiFi settings file is empty.
@@ -118,11 +125,7 @@ def get_hw_status_text() -> str:
         return ""
 
     link_status = g_wifi_state.nic.status()
-    try:
-        hw_status_text = Cyw43LinkStatus(link_status).name
-    except ValueError:
-        hw_status_text = str(link_status)
-
+    hw_status_text = __enum_value_to_name(Cyw43LinkStatus, link_status) or str(link_status)
     rssi = g_wifi_state.nic.status('rssi')
     return "cyw43_wifi_link_status = {} scan_active = {} rssi = {}".format(
         hw_status_text,
@@ -166,9 +169,9 @@ def get_ssid() -> str:
     return ""
 
 def get_ssid_status(ssid_index: int) -> str:
-    """Return the status of the specified SSID as a string.
+    """Return the status of the specified SSID (referenced by index).
 
-    This is one of:
+    This is a string, one of:
         NOT_FOUND   # this SSID was not found
         FOUND       # this SSID was found by the most recent scan
         ATTEMPT     # we attempted to connect to this SSID
@@ -177,10 +180,12 @@ def get_ssid_status(ssid_index: int) -> str:
         BADAUTH     # ... but the password is wrong
         SUCCESS     # ... and it worked
         LOST        # we connected to this SSID but the connection dropped
+
+    An empty string is returned if the specified SSID index does not appear in the wifi-settings file.
     """
 
     if ((ssid_index >= 1) and (ssid_index <= configuration.MAX_NUM_SSIDS)):
-        return g_wifi_state.ssid_scan_info[ssid_index].name
+        return __enum_value_to_name(SSIDScanInfo, g_wifi_state.ssid_scan_info[ssid_index]) or ""
 
     return ""
 
@@ -212,7 +217,7 @@ def __convert_string_to_bssid(text: str) -> bytes:
 
     return bssid
 
-def __fetch_ssid(ssid_index: int) -> typing.Tuple[SSIDType, str, bytes]:
+def __fetch_ssid(ssid_index: int) -> typing.Tuple[int, str, bytes]:
     """Internal. Fetch SSID or BSSID name from the wifi settings file."""
 
     # Generate search key
@@ -261,7 +266,7 @@ def __begin_connecting() -> None:
         if g_wifi_state.ssid_scan_info[ssid_index] == SSIDScanInfo.FOUND:
             g_wifi_state.selected_ssid_index = ssid_index
             break
-
+    
     if g_wifi_state.selected_ssid_index == 0:
         # There are no available hotspots to connect to, either because the scan
         # didn't find anything, or everything is FAILED, TIMEOUT, BADAUTH or LOST.
@@ -293,11 +298,10 @@ def __begin_connecting() -> None:
     else:
         g_wifi_state.nic.connect(ssid=ssid, key=password)
 
-def __give_up_connecting(info: SSIDScanInfo) -> None:
+def __give_up_connecting(info: int) -> None:
     """Internal. Mark the selected SSID as bad in some way (e.g. BADAUTH, TIMEOUT)
     so that it won't be tried again. Go back to the CONNECTING state."""
     g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = info
-    g_wifi_state.cstate = ConnectState.CONNECTING
     __begin_connecting()
 
 def __has_valid_address() -> bool:
@@ -316,26 +320,26 @@ def __scan() -> None:
 
     # Collect known SSIDs
     bssid_index: typing.Dict[bytes, int] = {}
-    ssid_index: typing.Dict[str, int] = {}
+    ssid_index: typing.Dict[bytes, int] = {}
     for i in range(1, configuration.MAX_NUM_SSIDS + 1):
-        ssid_type, ssid, bssid = __fetch_ssid(i)
+        ssid_type, ssid, bssid_bytes = __fetch_ssid(i)
         if ssid_type == SSIDType.BSSID:
-            bssid_index[bssid] = i 
+            bssid_index[bssid_bytes] = i 
         elif ssid_type == SSIDType.SSID:
-            ssid_index[ssid] = i
+            ssid_bytes = ssid.encode("utf-8")
+            ssid_index[ssid_bytes] = i
         else:
             break
 
     # Start the scan - it happens synchronously on Micropython
     for found in g_wifi_state.nic.scan():
-        ssid = found[0]
-        bssid = found[1]
-        if bssid in bssid_index:
-            g_wifi_state.ssid_scan_info[bssid_index[bssid]] = SSIDScanInfo.FOUND
-        elif ssid in ssid_index:
-            g_wifi_state.ssid_scan_info[ssid_index[ssid]] = SSIDScanInfo.FOUND
+        ssid_bytes = found[0]
+        bssid_bytes = found[1]
+        if bssid_bytes in bssid_index:
+            g_wifi_state.ssid_scan_info[bssid_index[bssid_bytes]] = SSIDScanInfo.FOUND
+        elif ssid_bytes in ssid_index:
+            g_wifi_state.ssid_scan_info[ssid_index[ssid_bytes]] = SSIDScanInfo.FOUND
 
-    g_wifi_state.cstate = ConnectState.CONNECTING
     g_wifi_state.scan_holdoff_time = __make_timeout_time_ms(configuration.REPEAT_SCAN_TIME_MS)
     __begin_connecting()
 
@@ -347,8 +351,7 @@ def __periodic_callback(_) -> None:
 
     if g_wifi_state.cstate == ConnectState.TRY_TO_CONNECT:
         # In this state, we are not connected, and we are waiting for a holdoff time
-        # before beginning a scan for available hotspots. If a scan is already running
-        # (e.g. due to disconnecting during a scan) we wait for it to finish.
+        # before beginning a scan for available hotspots.
         __ensure_disconnected()
         if has_no_wifi_details():
             # This is reached if the storage file contains no SSIDs.
@@ -380,9 +383,9 @@ def __periodic_callback(_) -> None:
             elif __time_reached(g_wifi_state.connect_timeout_time):
                 # Connection failed with a timeout
                 __give_up_connecting(SSIDScanInfo.TIMEOUT)
-            else:
-                # Fallback -> connection failure
-                __give_up_connecting(SSIDScanInfo.FAILED)
+        else:
+            # Fallback -> connection failure
+            __give_up_connecting(SSIDScanInfo.FAILED)
 
     elif g_wifi_state.cstate == ConnectState.CONNECTED_IP:
         # In this state we should be connected, but the connection could drop at any time

@@ -50,7 +50,7 @@ class KeyValueStore:
         
         return (key_index, value_index, end_index)
 
-    def get(self, key: str, errors: str = "ignore") -> typing.Optional[str]:
+    def get(self, key: str) -> typing.Optional[str]:
         """Get a value for a key or return None.
 
         The encoding for values is UTF-8. The errors parameter
@@ -62,7 +62,7 @@ class KeyValueStore:
             return None
     
         (_, value_index, end_index) = found
-        return self.contents[value_index : end_index].decode("utf-8", errors=errors)
+        return self.contents[value_index : end_index].decode("utf-8", "ignore")
 
 def get_value_for_key(key: str) -> typing.Optional[str]:
     """Scan the settings file in Flash for a particular key.
