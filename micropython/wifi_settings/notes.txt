@@ -1,0 +1,101 @@
+
+Micropython isn't multithreaded - Python code doesn't run in parallel. How can we run the wifi-settings connection code, or the remote access service?
+One method is to use asynchronous Python and provide a service which should be executed asynchronously during user code. This depends on the user code executing the command (but then, in C, we depend on the user calling an API function). It also assumes the user code doesn't do something that disrupts async execution (such as entering an infinite loop). The same is somewhat true in C, though C code would also have to disable interrupts to really close everything off. I don't think the Python code can do this. 
+The appeal of this method is that it will be very portable to all Micropython devices. And remote access services can also be written in Python, and will have no difficulty doing anything that can be done in Python such as modifying files or even executing expressions. However, it would require a rewrite of wifi-settings in Python, and the limitations of the Micropython network API would be retained - for example scanning for APs is a blocking task.
+
+What are the alternatives? I think that background tasks can be written in C...
+
+lwip_init is called at early boot stage (from C)
+then cyw43_init 
+then mod_network_init();
+then mod_network_lwip_init();
+do these do anything periodic?
+
+mdns_resp_init seems to be registering a service
+    and this is part of LWIP
+    so it's just done with the usual API where a callback function is registered
+
+Perhaps sys_timeout can be used to register a periodic task and have it serviced with LWIP.
+
+
+That works - I'd need to do less initialisation.
+In fact all Pico SDK system calls would need to be replaced with calls to Micropython equivalents.
+How would we access the settings file?
+Storing it at the end of the Flash memory will not work because this space is occupied by the filesystem (yes, even the last block).
+We'd need to call via the filesystem.
+How can a background task run Python code?
+    If we could do that then we can maintain the settings file as a file in the filesystem
+    and also the remote can read/write files
+    and the remote could even execute Python itself!
+
+How does modwebrepl execute Python code?
+
+1192             // Register our receive callback.
+1193             MICROPY_PY_LWIP_ENTER
+1194             tcp_recv(socket->pcb.tcp, _lwip_tcp_recv);
+1195             socket->state = STATE_CONNECTING;
+1196             err = tcp_connect(socket->pcb.tcp, &dest, port, _lwip_tcp_connected);
+1197             if (err != ERR_OK) {
+1198                 MICROPY_PY_LWIP_EXIT
+1199                 socket->state = STATE_NEW;
+1200                 mp_raise_OSError(error_lookup_table[-err]);
+1201             }   
+1202             socket->tcp_peer_addr = dest;
+1203             socket->tcp_peer_port = (mp_uint_t)port;
+1204             MICROPY_PY_LWIP_EXIT
+
+exec_user_callback?
+
+ 444 static inline void exec_user_callback(lwip_socket_obj_t *socket) {
+ 445     if (socket->callback != MP_OBJ_NULL) {
+ 446         // Schedule the user callback to execute outside the lwIP context
+ 447         mp_sched_schedule(socket->callback, MP_OBJ_FROM_PTR(socket));
+ 448     }   
+ 449 }       
+
+usermodule
+    Native code is brought into the micropython build. This is very like extending the
+    original source code. 
+
+natmod
+    Can't call cyw43 or LWIP functions. You can only call things exported in mp_fun_table
+    (which are general purpose library functions) and things that have a fixed address,
+    which would only be boot ROM functions. 
+
+pure Python
+    No background tasks
+        actually, callbacks are allowed... Hmm
+    Rewrite required
+    Scanning for APs will block
+
+If I could get a callback like exec_user_callback to run some Python code for me...
+
+    micropython.schedule(function, arg)
+    But this runs it immediately... I think? but I want it to run 1000 ms in the future or whatever
+
+    The lwip callback is only used when TCP data is received or a new connection is accepted
+    A timer interrupt? shared/runtime/mpirq.c ?
+    https://docs.micropython.org/en/latest/reference/isr_rules.html
+    
+    timer = machine.Timer(timer_id, freq)
+        may be periodic or one-shot
+    timer.callback(<function>) 
+        A callback function cannot allocate memory or use floating-point
+        as it is an ISR
+        and therefore it should call micropython.schedule(...)
+        to trigger a second-level handler that runs in the main loop
+
+Yes that works!
+
+    import machine, micropython
+    
+    def trigger2(_):
+        print("Hello")
+
+    def trigger(_):
+        micropython.schedule(trigger2, 0)
+
+    timer = machine.Timer(-1, period=1000, callback=trigger,
+                          mode=machine.Timer.PERIODIC, hard=True)
+
+

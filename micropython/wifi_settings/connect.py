@@ -1,37 +1,22 @@
-/**
- * Copyright (c) 2025 Jack Whitham
- *
- * SPDX-License-Identifier: BSD-3-Clause
- *
- * This pico-wifi-settings module manages the WiFi connection
- * by calling cyw43 and LwIP functions.
- *
- */
+#
+#  Copyright (c) 2025 Jack Whitham
+# 
+#  SPDX-License-Identifier: BSD-3-Clause
+# 
+#  This pico-wifi-settings module manages the WiFi connection
+#  by calling network.WLAN functions.
+# 
+#
 
+from . import storage, configuration
 
+import enum
+import typing
 
-#define WIFI_SETTINGS_CONNECT_C
-#include "wifi_settings/wifi_settings_configuration.h"
-#include "wifi_settings/wifi_settings_connect.h"
-#include "wifi_settings/wifi_settings_connect_internal.h"
-#include "wifi_settings/wifi_settings_flash_storage.h"
-#include "wifi_settings/wifi_settings_hostname.h"
-
-#ifdef ENABLE_REMOTE_UPDATE
-#include "wifi_settings/wifi_settings_remote.h"
-#endif
-
-#include "pico/binary_info.h"
-#include "pico/error.h"
-
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-
-
-from .storage import get_value_for_key
-
-struct wifi_state_t g_wifi_state;
+# Micropython-specific imports:
+import machine # type: ignore
+import micropython # type: ignore
+from time import ticks_add, ticks_ms, ticks_diff # type: ignore
 
 class SSIDType(enum.Enum):
     NONE = 0
@@ -40,14 +25,13 @@ class SSIDType(enum.Enum):
 
 class ConnectState(enum.Enum):
     UNINITIALISED = 0           # cyw43 hardware was not started
-    INITIALISATION_ERROR = 1    # initialisation failed (see hw_error)
+    INITIALISATION_ERROR = 1    # initialisation failed
     STORAGE_EMPTY_ERROR = 2     # no WiFi details are known
     DISCONNECTED = 3            # call wifi_settings_connect() to connect
     TRY_TO_CONNECT = 4          # connection process begun
-    SCANNING = 5                # scan running
+    # SCANNING = 5              # scan running (N/A on Micropython as scans are synchronous)
     CONNECTING = 6              # connection running
     CONNECTED_IP = 7            # connection is ready for use
-};
 
 class SSIDScanInfo(enum.Enum):
     NOT_FOUND = 0               # this SSID was not found
@@ -59,30 +43,41 @@ class SSIDScanInfo(enum.Enum):
     SUCCESS = 6                 # ... and it worked
     LOST = 7                    # we connected to this SSID but the connection dropped
 
-IPV4_ADDRESS_SIZE = 16      # "xxx.xxx.xxx.xxx\0"
-KEY_SIZE = 10               # e.g. "bssid0"
+class Cyw43LinkStatus(enum.Enum):
+    CYW43_LINK_DOWN = 0
+    CYW43_LINK_JOIN = 1
+    CYW43_LINK_NOIP = 2
+    CYW43_LINK_UP = 3
+    CYW43_LINK_FAIL = -1
+    CYW43_LINK_NONET = -2
+    CYW43_LINK_BADAUTH = -3
+
+WIFI_BSSID_SIZE = 6
 
 class WiFiState:
     cstate = ConnectState.UNINITIALISED
-    ssid_scan_info = [SSIDScanInfo.NOT_FOUND * (MAX_NUM_SSIDS + 1)]
+    ssid_scan_info = [SSIDScanInfo.NOT_FOUND for _ in range(configuration.MAX_NUM_SSIDS + 1)]
     selected_ssid_index = 0
     connect_timeout_time = 0
     scan_holdoff_time = 0
-    hw_error = ""
+    hw_error: str = ""
     nic: typing.Any = None
+    timer: typing.Any = None
 
 g_wifi_state = WiFiState()
 
 def has_no_wifi_details() -> bool:
+    """Determine if the WiFi settings file is empty.
+
+    If the file is empty or not found, pico-wifi-settings will be unable to connect. See README.md
+    for instructions on how to provide settings."""
     ssid_type, _, _ = __fetch_ssid(1)
     return ssid_type == SSIDType.NONE
 
 def get_connect_status_text() -> typing.Optional[str]:
+    """Get a report on the current connection status (as a string)."""
     if g_wifi_state.cstate == ConnectState.TRY_TO_CONNECT:
         return "WiFi did not find any known hotspot yet"
-
-    if g_wifi_state.cstate == ConnectState.SCANNING:
-        return "WiFi is scanning for hotspots"
 
     if g_wifi_state.cstate == ConnectState.CONNECTING:
         ssid_type, ssid, _ = __fetch_ssid(g_wifi_state.selected_ssid_index)
@@ -113,19 +108,16 @@ def get_connect_status_text() -> typing.Optional[str]:
     return "WiFi status is unknown ({})".format(g_wifi_state.cstate)
 
 def get_hw_status_text() -> str:
+    """Get a report on the network hardware (cyw43) status (e.g. signal strength)."""
     if g_wifi_state.nic is None:
         return ""
 
     link_status = g_wifi_state.nic.status()
-    hw_status_text = {
-        0: "CYW43_LINK_DOWN",
-        1: "CYW43_LINK_JOIN",
-        2: "CYW43_LINK_NOIP",
-        3: "CYW43_LINK_UP",
-        -1: "CYW43_LINK_FAIL",
-        -2: "CYW43_LINK_NONET",
-        -3: "CYW43_LINK_BADAUTH",
-    }.get(link_status, str(link_status))
+    try:
+        hw_status_text = Cyw43LinkStatus(link_status).name
+    except ValueError:
+        hw_status_text = str(link_status)
+
     rssi = g_wifi_state.nic.status('rssi')
     return "cyw43_wifi_link_status = {} scan_active = {} rssi = {}".format(
         hw_status_text,
@@ -133,21 +125,22 @@ def get_hw_status_text() -> str:
         rssi)
 
 def get_ip_status_text() -> str:
+    """Get a report on the IP stack status (e.g. IP address)."""
     if ((g_wifi_state.nic is None)
     or not g_wifi_state.nic.ipconfig("has_dhcp4")):
         # Not connected
         return ""
     
-    char addr_buf1[IPV4_ADDRESS_SIZE];
-    char addr_buf2[IPV4_ADDRESS_SIZE];
-    char addr_buf3[IPV4_ADDRESS_SIZE];
     (address, netmask) = g_wifi_state.nic.ipconfig("addr4")
     gateway = g_wifi_state.nic.ipconfig("gw4")
     return "IPv4 address = {} netmask = {} gateway = {}".format(
         address, netmask, gateway)
 
 def get_ip() -> str:
-    if ((g_wifi_state.nic is None) or not __wifi_is_connected()):
+    """Get the IP address by itself (as a string).
+
+    Returns "" if not known."""
+    if ((g_wifi_state.nic is None) or not g_wifi_state.nic.ipconfig("has_dhcp4")):
         # Not connected - return empty string
         return ""
 
@@ -155,6 +148,7 @@ def get_ip() -> str:
     return address
 
 def get_ssid() -> str:
+    """Return the current SSID (as a string)."""
     if g_wifi_state.cstate in (
             ConnectState.CONNECTING,
             ConnectState.CONNECTED_IP):
@@ -167,20 +161,33 @@ def get_ssid() -> str:
     return ""
 
 def get_ssid_status(ssid_index: int) -> str:
-    if ((ssid_index >= 1) and (ssid_index <= MAX_NUM_SSIDS)):
+    """Return the status of the specified SSID as a string.
+
+    This is one of:
+        NOT_FOUND   # this SSID was not found
+        FOUND       # this SSID was found by the most recent scan
+        ATTEMPT     # we attempted to connect to this SSID
+        FAILED      # ... but it failed with an error
+        TIMEOUT     # ... but it failed with a timeout
+        BADAUTH     # ... but the password is wrong
+        SUCCESS     # ... and it worked
+        LOST        # we connected to this SSID but the connection dropped
+    """
+
+    if ((ssid_index >= 1) and (ssid_index <= configuration.MAX_NUM_SSIDS)):
         return g_wifi_state.ssid_scan_info[ssid_index].name
 
     return ""
 
-def __wifi_is_connected() -> bool:
-    return ((g_wifi_state.nic is not None)
-        and g_wifi_state.nic.ipconfig("has_dhcp4"))
-
 def __convert_string_to_bssid(text: str) -> bytes:
-    # A BSSID is specified in the file as bssid1=01:23:45:67:89:ab
-    # note 1 - ':' separators
-    # note 2 - exactly 17 bytes
-    if text_size != ((WIFI_BSSID_SIZE * 3) - 1):
+    """Internal. Convert a BSSID (text) to six bytes.
+
+    A BSSID is specified in the file as bssid1=01:23:45:67:89:ab
+    - note 1 - ':' separators
+    - note 2 - exactly 17 bytes
+    This is converted to six bytes, or zero bytes on error.
+    """
+    if len(text) != ((WIFI_BSSID_SIZE * 3) - 1):
         # Malformed BSSID - not exactly 17 bytes
         return b""
 
@@ -201,13 +208,13 @@ def __convert_string_to_bssid(text: str) -> bytes:
     return bssid
 
 def __fetch_ssid(ssid_index: int) -> typing.Tuple[SSIDType, str, bytes]:
+    """Internal. Fetch SSID or BSSID name from the wifi settings file."""
+
     # Generate search key
     key = "bssid{}".format(ssid_index)
 
-    ssid_size = WIFI_SSID_SIZE
-
     # A BSSID is specified in the file as bssid1=01:23:45:67:89:ab
-    ssid = storage.get_value_for_key(key)
+    ssid = storage.get_value_for_key(key) or ""
     bssid = __convert_string_to_bssid(ssid)
     if bssid:
         return (SSIDType.BSSID, ssid, bssid)
@@ -215,7 +222,7 @@ def __fetch_ssid(ssid_index: int) -> typing.Tuple[SSIDType, str, bytes]:
     # An SSID is specified in the file as ssid1=MyHotspotName
     # and must match exactly; SSIDs cannot contain characters recognised
     # as end of line or end of file (\r \n \xff \x00 \x1a)
-    ssid = storage.get_value_for_key(key[1:])
+    ssid = storage.get_value_for_key(key[1:]) or ""
     if ssid:
         return (SSIDType.SSID, ssid, b"")
 
@@ -223,18 +230,29 @@ def __fetch_ssid(ssid_index: int) -> typing.Tuple[SSIDType, str, bytes]:
     return (SSIDType.NONE, "?", b"")
 
 def __ensure_disconnected() -> None:
+    """Internal. Force disconnection from the current hotspot (if any)."""
     if g_wifi_state.nic is not None:
         g_wifi_state.nic.disconnect()
-    g_wifi_state.nic = None
+
+def __make_timeout_time_ms(delta_ms: int) -> int:
+    """Internal. Make a timeout time, ms in the future."""
+    return ticks_add(ticks_ms(), delta_ms)
+
+def __time_reached(time_abs: int) -> int:
+    """Internal. Return true if time_abs is in the past."""
+    return ticks_diff(ticks_ms(), time_abs) >= 0
 
 def __begin_connecting() -> None:
-    # This function is called after a scan, to begin connecting to a new hotspot.
-    # It looks at the results of the scan and previous connections, via ssid_scan_info.
+    """Internal. This function is called after a scan, to begin connecting to a new hotspot.
+
+    It looks at the results of the scan and previous connections, via ssid_scan_info.
+    The first hotspot in the FOUND state will be attempted. If no hotspot is in the FOUND
+    state, then the connection will return to the TRY_TO_CONNECT state (forcing a rescan)."""
     __ensure_disconnected()
 
     # Which hotspot to connect to?
     g_wifi_state.selected_ssid_index = 0
-    for ssid_index in range(1, MAX_NUM_SSIDS + 1):
+    for ssid_index in range(1, configuration.MAX_NUM_SSIDS + 1):
         if g_wifi_state.ssid_scan_info[ssid_index] == SSIDScanInfo.FOUND:
             g_wifi_state.selected_ssid_index = ssid_index
             break
@@ -248,12 +266,12 @@ def __begin_connecting() -> None:
 
     # Begin connecting
     g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = SSIDScanInfo.ATTEMPT
-    g_wifi_state.connect_timeout_time = __make_timeout_time_ms(CONNECT_TIMEOUT_TIME_MS)
+    g_wifi_state.connect_timeout_time = __make_timeout_time_ms(configuration.CONNECT_TIMEOUT_TIME_MS)
     g_wifi_state.cstate = ConnectState.CONNECTING
 
     # Get the password
     key = "pass{}".format(g_wifi_state.selected_ssid_index)
-    password = storage.get_value_for_key(key)
+    password = storage.get_value_for_key(key) or ""
 
     # Get the BSSID or SSID
     ssid_type, ssid, bssid = __fetch_ssid(g_wifi_state.selected_ssid_index)
@@ -271,255 +289,192 @@ def __begin_connecting() -> None:
         g_wifi_state.nic.connect(ssid=ssid, key=password)
 
 def __give_up_connecting(info: SSIDScanInfo) -> None:
-    # Mark the selected SSID as bad in some way (e.g. BADAUTH, TIMEOUT)
-    # so that it won't be tried again. Go back to the SCANNING state.
+    """Internal. Mark the selected SSID as bad in some way (e.g. BADAUTH, TIMEOUT)
+    so that it won't be tried again. Go back to the CONNECTING state."""
     g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = info
-    g_wifi_state.cstate = ConnectState.SCANNING
+    g_wifi_state.cstate = ConnectState.CONNECTING
+    __begin_connecting()
 
 def __has_valid_address() -> bool:
-    char address_buf[IPV4_ADDRESS_SIZE];
+    """Internal. Return true if the WLAN interface has an IPv4 address assigned by DHCP."""
     ip = get_ip()
-    return ip and ip != "0.0.0.0"
+    return (ip != "") and (ip != "0.0.0.0")
 
-def __begin_new_scan() -> None:
+def __scan() -> None:
+    """Internal. Scan for known hotspots (while disconnected).
+
+    The scan is synchronous due to Micropython limitations."""
+
     # Begin a scan. We will reset everything we know about hotspots first.
-    for ssid_index in range(1, MAX_NUM_SSIDS + 1):
-        g_wifi_state.ssid_scan_info[ssid_index] = ConnectState.NOT_FOUND
+    for i in range(1, configuration.MAX_NUM_SSIDS + 1):
+        g_wifi_state.ssid_scan_info[i] = SSIDScanInfo.NOT_FOUND
 
     # Collect known SSIDs
     bssid_index: typing.Dict[bytes, int] = {}
     ssid_index: typing.Dict[str, int] = {}
-    for ssid_index in range(1, MAX_NUM_SSIDS + 1):
-        ssid_type, ssid, bssid = __fetch_ssid(ssid_index)
+    for i in range(1, configuration.MAX_NUM_SSIDS + 1):
+        ssid_type, ssid, bssid = __fetch_ssid(i)
         if ssid_type == SSIDType.BSSID:
-            bssid_index[bssid] = ssid_index
+            bssid_index[bssid] = i 
         elif ssid_type == SSIDType.SSID:
-            ssid_index[ssid] = ssid_index
+            ssid_index[ssid] = i
         else:
             break
 
-    # Start the scan - it happens synchronously
+    # Start the scan - it happens synchronously on Micropython
     for found in g_wifi_state.nic.scan():
         ssid = found[0]
         bssid = found[1]
         if bssid in bssid_index:
-            g_wifi_state.ssid_scan_info[bssid_index[bssid]] = ConnectState.NOT_FOUND
+            g_wifi_state.ssid_scan_info[bssid_index[bssid]] = SSIDScanInfo.FOUND
+        elif ssid in ssid_index:
+            g_wifi_state.ssid_scan_info[ssid_index[ssid]] = SSIDScanInfo.FOUND
 
-    // No more entries to try
-    return 0;
+    g_wifi_state.cstate = ConnectState.CONNECTING
+    g_wifi_state.scan_holdoff_time = __make_timeout_time_ms(configuration.REPEAT_SCAN_TIME_MS)
+    __begin_connecting()
+
+def __periodic_callback(_) -> None:
+    """Internal. Called periodically to check the connection or search for a hotspot.
+
+    Period is PERIODIC_TIME_MS. This is called via the schedule() function so it is
+    able to do anything that can normally be done in Python code."""
+
+    if g_wifi_state.cstate == ConnectState.TRY_TO_CONNECT:
+        # In this state, we are not connected, and we are waiting for a holdoff time
+        # before beginning a scan for available hotspots. If a scan is already running
+        # (e.g. due to disconnecting during a scan) we wait for it to finish.
+        __ensure_disconnected()
+        if has_no_wifi_details():
+            # This is reached if the storage file contains no SSIDs.
+            g_wifi_state.cstate = ConnectState.STORAGE_EMPTY_ERROR
+        elif __time_reached(g_wifi_state.scan_holdoff_time):
+            # No need to check cyw43_wifi_scan_active here as scans are synchronous
+            __scan()
+
+    elif g_wifi_state.cstate == ConnectState.CONNECTING:
+        # In this state, we are joining a WiFi hotspot, having found at least one
+        # possibility during the scan.
+        link_status = g_wifi_state.nic.status()
+        if link_status in (Cyw43LinkStatus.CYW43_LINK_DOWN,
+                           Cyw43LinkStatus.CYW43_LINK_FAIL,
+                           Cyw43LinkStatus.CYW43_LINK_NONET):
+            # Connection failed - this hotspot must have disappeared
+            __give_up_connecting(SSIDScanInfo.FAILED)
+        elif link_status == Cyw43LinkStatus.CYW43_LINK_BADAUTH:
+            # Connection failed because the password is incorrect
+            __give_up_connecting(SSIDScanInfo.BADAUTH)
+        elif link_status in (Cyw43LinkStatus.CYW43_LINK_JOIN,
+                             Cyw43LinkStatus.CYW43_LINK_NOIP,
+                             Cyw43LinkStatus.CYW43_LINK_UP):
+            # Connection still in progress or completed
+            if __has_valid_address():
+                # Successful
+                g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = SSIDScanInfo.SUCCESS
+                g_wifi_state.cstate = ConnectState.CONNECTED_IP
+            elif __time_reached(g_wifi_state.connect_timeout_time):
+                # Connection failed with a timeout
+                __give_up_connecting(SSIDScanInfo.TIMEOUT)
+            else:
+                # Fallback -> connection failure
+                __give_up_connecting(SSIDScanInfo.FAILED)
+
+    elif g_wifi_state.cstate == ConnectState.CONNECTED_IP:
+        # In this state we should be connected, but the connection could drop at any time
+        if not __has_valid_address():
+            # Connection lost
+            __give_up_connecting(SSIDScanInfo.LOST)
+            # It may be some time since the last scan, so scan again
+            g_wifi_state.cstate = ConnectState.TRY_TO_CONNECT
+    elif g_wifi_state.cstate == ConnectState.STORAGE_EMPTY_ERROR:
+        # This state is reached if the storage file contains no SSIDs.
+        # Wait for the file to be updated.
+        if not has_no_wifi_details():
+            g_wifi_state.cstate = ConnectState.TRY_TO_CONNECT
+    else:
+        # nothing to do / invalid state
+        pass
+
+def __periodic_callback_isr(_) -> None:
+    """Internal. Called periodically to check the connection or search for a hotspot.
+
+    This function can be called as a timer interrupt."""
+    micropython.schedule(__periodic_callback, 0)
+
+def init() -> None:
+    """Initialise pico-wifi-settings for Micropython."""
+    if g_wifi_state.cstate != ConnectState.UNINITIALISED:
+        # init() not allowed in this state
+        raise ValueError()
+
+    g_wifi_state.cstate = ConnectState.INITIALISATION_ERROR
+    try:
+        # Set up to connect to an access point
+        import network # type: ignore
+        g_wifi_state.nic = network.WLAN(network.WLAN.IF_STA)
+        g_wifi_state.nic.active(True)
+    except Exception as e:
+        # init() not available as there is no WLAN support
+        g_wifi_state.hw_error = str(e)
+        raise NotImplementedError() from None
+
+    # Country code setting - not available for Micropython as CYW43 is already initialised
+    # Hostname setting - not available for Micropython as netif_set_hostname can't be called
+
+    # State initialised - we can scan immediately because CYW43 was already initialised by Micropython
+    g_wifi_state.connect_timeout_time = __make_timeout_time_ms(configuration.CONNECT_TIMEOUT_TIME_MS)
+    g_wifi_state.scan_holdoff_time = __make_timeout_time_ms(0)
+    g_wifi_state.cstate = ConnectState.DISCONNECTED
+    g_wifi_state.selected_ssid_index = 0
+
+    # Start periodic worker
+    g_wifi_state.timer = machine.Timer(-1, period=configuration.PERIODIC_TIME_MS,
+                      callback=__periodic_callback_isr,
+                      mode=machine.Timer.PERIODIC, hard=True)
+
+    # #ifdef ENABLE_REMOTE_UPDATE
+    # // Start remote access service
+    # g_wifi_state.hw_error_code = wifi_settings_remote_init();
+    # #endif
+
+def deinit() -> None:
+    """Deinitialise pico-wifi-settings for Micropython (disconnect and stop periodic task)."""
+    if g_wifi_state.cstate == ConnectState.UNINITIALISED:
+        return
     
-    cyw43_wifi_scan_options_t opts;
-    memset(&opts, 0, sizeof(opts));
-    g_wifi_state.hw_error_code = cyw43_wifi_scan(g_wifi_state.cyw43, &opts, NULL, wifi_scan_callback);
-    g_wifi_state.cstate = SCANNING;
-    g_wifi_state.scan_holdoff_time = make_timeout_time_ms(REPEAT_SCAN_TIME_MS);
-}
+    __ensure_disconnected()
+    if g_wifi_state.timer is not None:
+        g_wifi_state.timer.deinit()
+    g_wifi_state.timer = None
 
-static void wifi_settings_periodic_callback(async_context_t* unused1, async_at_time_worker_t* unused2) {
-    switch (g_wifi_state.cstate) {
-        case TRY_TO_CONNECT:
-            // In this state, we are not connected, and we are waiting for a holdoff time
-            // before beginning a scan for available hotspots. If a scan is already running
-            // (e.g. due to disconnecting during a scan) we wait for it to finish.
-            ensure_disconnected();
-            if (wifi_settings_has_no_wifi_details()) {
-                // This is reached if the storage file contains no SSIDs.
-                g_wifi_state.cstate = STORAGE_EMPTY_ERROR;
-            } else if (time_reached(g_wifi_state.scan_holdoff_time) && !cyw43_wifi_scan_active(g_wifi_state.cyw43)) {
-                begin_new_scan();
-            }
-            break;
-        case SCANNING:
-            // In this state, we are waiting for a hotspot scan to complete.
-            // If it already completed, and we have some results, we can go directly to CONNECTING.
-            if (!cyw43_wifi_scan_active(g_wifi_state.cyw43)) {
-                begin_connecting();
-            }
-            break;
-        case CONNECTING:
-            // In this state, we are joining a WiFi hotspot, having found at least one
-            // possibility during the scan.
-            switch (cyw43_wifi_link_status(g_wifi_state.cyw43, CYW43_ITF_STA)) {
-                case CYW43_LINK_DOWN:
-                case CYW43_LINK_FAIL:
-                case CYW43_LINK_NONET:
-                    // Connection failed - this hotspot must have disappeared
-                    give_up_connecting(FAILED);
-                    break;
-                case CYW43_LINK_BADAUTH:
-                    // Connection failed because the password is incorrect
-                    give_up_connecting(BADAUTH);
-                    break;
-                case CYW43_LINK_JOIN:
-                case CYW43_LINK_NOIP:
-                case CYW43_LINK_UP:
-                    // Connection still in progress or completed
-                    g_wifi_state.netif = netif_default;
-                    if (wifi_is_connected() && has_valid_address()) {
-                        // Successful
-                        g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = SUCCESS;
-                        g_wifi_state.cstate = CONNECTED_IP;
-                    } else if (time_reached(g_wifi_state.connect_timeout_time)) {
-                        // Connection failed with a timeout
-                        give_up_connecting(TIMEOUT);
-                    }
-                    break;
-                default:
-                    // Fallback -> connection failure
-                    give_up_connecting(FAILED);
-                    break;
-            }
-            break;
-        case CONNECTED_IP:
-            // In this state we should be connected, but the connection could drop at any time
-            if (!wifi_is_connected() || !has_valid_address()) {
-                // Connection lost
-                give_up_connecting(LOST);
-                // It may be some time since the last scan, so scan again
-                g_wifi_state.cstate = TRY_TO_CONNECT;
-            }
-            break;
-        case STORAGE_EMPTY_ERROR:
-            // This state is reached if the storage file contains no SSIDs.
-            // Wait for the file to be updated.
-            if (!wifi_settings_has_no_wifi_details()) {
-                g_wifi_state.cstate = TRY_TO_CONNECT;
-            }
-            break;
-        case INITIALISATION_ERROR:
-        case UNINITIALISED:
-        case DISCONNECTED:
-            // nothing to do
-            break;
-        default:
-            break;
-    }
-    // trigger again after the period
-    g_wifi_state.periodic_worker.next_time =
-        delayed_by_ms(g_wifi_state.periodic_worker.next_time,
-                      PERIODIC_TIME_MS);
-    async_context_add_at_time_worker(
-        g_wifi_state.context,
-        &g_wifi_state.periodic_worker);
-}
+    if g_wifi_state.nic is not None:
+        g_wifi_state.nic.active(False)
+    g_wifi_state.nic = False
 
-int wifi_settings_init() {
-    if (g_wifi_state.cstate != UNINITIALISED) {
-        return PICO_ERROR_INVALID_STATE;
-    }
-    // Put wifi-settings library version into the binary info
-    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings v" WIFI_SETTINGS_VERSION_STRING));
+    g_wifi_state.cstate = ConnectState.UNINITIALISED
+    g_wifi_state.selected_ssid_index = 0
 
-    // Start with globals in known state
-    memset(&g_wifi_state, 0, sizeof(g_wifi_state));
-    g_wifi_state.cstate = UNINITIALISED;
-    g_wifi_state.cyw43 = &cyw43_state; // from Pico SDK, lib/cyw43-driver (MAC layer)
+def connect() -> None:
+    """Connect to WiFi if possible, using the settings in Flash.
 
-    // Which country should be used?
-    // You can put "country=<xy>" in the WiFi settings file to set a different value.
-    // The code <xy> is a two-byte ISO-3166-1 country code
-    // such as AU (Australia), SE (Sweden) or GB (United Kingdom).
-    char value[2];
-    uint value_size = sizeof(value);
-    uint32_t country = PICO_CYW43_ARCH_DEFAULT_COUNTRY_CODE; // worldwide default
+    The actual connection may take some time to be established, and
+    may not be possible. Call is_connected() to see if
+    the connection is ready."""
 
-    if ((wifi_settings_get_value_for_key("country", value, &value_size))
-    && (value_size == 2)) {
-        country = CYW43_COUNTRY(value[0], value[1], 0);
-    }
+    if g_wifi_state.cstate == ConnectState.DISCONNECTED:
+        # Try to connect when periodic worker is next called
+        g_wifi_state.cstate = ConnectState.TRY_TO_CONNECT
 
-    // Set the hostname from wifi-settings "name=<xxx>" or use unique board id
-    wifi_settings_set_hostname();
+def disconnect() -> None:
+    """Disconnect from WiFi immediately."""
+    if ((g_wifi_state.cstate != ConnectState.UNINITIALISED)
+    and (g_wifi_state.cstate != ConnectState.INITIALISATION_ERROR)):
+        __ensure_disconnected()
+        g_wifi_state.cstate = ConnectState.DISCONNECTED
+        g_wifi_state.selected_ssid_index = 0
 
-    // Hardware init
-    g_wifi_state.hw_error_code = cyw43_arch_init_with_country(country);
-    if (g_wifi_state.hw_error_code) {
-        g_wifi_state.cstate = INITIALISATION_ERROR;
-        return g_wifi_state.hw_error_code;
-    }
-
-    // After initialisation, any call to LWIP requires this lock (callback functions
-    // are always holding it already, but this function is not a callback)
-    cyw43_arch_lwip_begin();
-
-    // Set up to connect to an access point
-    cyw43_arch_enable_sta_mode();
-
-    // State initialised
-    g_wifi_state.connect_timeout_time = make_timeout_time_ms(CONNECT_TIMEOUT_TIME_MS);
-    g_wifi_state.scan_holdoff_time = make_timeout_time_ms(INITIAL_SETUP_TIME_MS);
-    g_wifi_state.cstate = DISCONNECTED;
-
-    // Use cyw43 async context
-    g_wifi_state.context = cyw43_arch_async_context();
-
-    // Start periodic worker
-    g_wifi_state.periodic_worker.next_time = g_wifi_state.scan_holdoff_time;
-    g_wifi_state.periodic_worker.do_work = wifi_settings_periodic_callback;
-    async_context_add_at_time_worker(
-        g_wifi_state.context,
-        &g_wifi_state.periodic_worker);
-
-#ifdef ENABLE_REMOTE_UPDATE
-    // Start remote access service
-    g_wifi_state.hw_error_code = wifi_settings_remote_init();
-#endif
-    // set lwip hostname (overriding the default set by cyw43_cb_tcpip_init)
-    netif_set_hostname(netif_default, wifi_settings_get_hostname());
-
-    // Ready to run LWIP functions
-    cyw43_arch_lwip_end();
-
-    return g_wifi_state.hw_error_code;
-}
-
-void wifi_settings_deinit() {
-    if (g_wifi_state.cstate == UNINITIALISED) {
-        return;
-    }
-    ensure_disconnected();
-    if (g_wifi_state.context) {
-        // stop periodic task
-        async_context_remove_at_time_worker(
-            g_wifi_state.context,
-            &g_wifi_state.periodic_worker);
-    }
-    g_wifi_state.context = NULL;
-    cyw43_arch_deinit();
-    g_wifi_state.cstate = UNINITIALISED;
-    g_wifi_state.selected_ssid_index = 0;
-}
-
-void wifi_settings_connect() {
-    if (g_wifi_state.cstate == DISCONNECTED) {
-        // Try to connect when periodic worker is next called
-        cyw43_arch_lwip_begin();
-        if (g_wifi_state.cstate == DISCONNECTED) {
-            g_wifi_state.cstate = TRY_TO_CONNECT;
-        }
-        cyw43_arch_lwip_end();
-    }
-}
-
-void wifi_settings_disconnect() {
-    // Immediate disconnect
-    if ((g_wifi_state.cstate != UNINITIALISED)
-    && (g_wifi_state.cstate != INITIALISATION_ERROR)) {
-        cyw43_arch_lwip_begin();
-        ensure_disconnected();
-        g_wifi_state.cstate = DISCONNECTED;
-        g_wifi_state.selected_ssid_index = 0;
-        cyw43_arch_lwip_end();
-    }
-}
-
-bool wifi_settings_is_connected() {
-    bool rc = false;
-    if (g_wifi_state.cstate == CONNECTED_IP) {
-        // wifi_is_connected calls LWIP functions, so the lock is needed
-        cyw43_arch_lwip_begin();
-        rc = wifi_is_connected();
-        cyw43_arch_lwip_end();
-    }
-    return rc;
-}
+def is_connected() -> bool:
+    """Determine if connection is ready."""
+    if g_wifi_state.cstate == ConnectState.CONNECTED_IP:
+        return __has_valid_address()
+    return False
