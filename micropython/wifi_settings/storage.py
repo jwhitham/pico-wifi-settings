@@ -10,7 +10,11 @@
 
 from . import configuration
 
-import typing
+# Type-checking
+try:
+    import typing
+except ImportError:
+    pass
 
 class KeyValueStore:
     """Represents a key=value store such as the wifi-settings file.

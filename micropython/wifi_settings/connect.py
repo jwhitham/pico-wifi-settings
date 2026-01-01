@@ -11,7 +11,12 @@
 from . import storage, configuration
 
 import enum
-import typing
+
+# Type-checking
+try:
+    import typing
+except ImportError:
+    pass
 
 # Micropython-specific imports:
 import machine # type: ignore

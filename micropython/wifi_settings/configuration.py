@@ -28,4 +28,4 @@ PERIODIC_TIME_MS = 1000
 MAX_NUM_SSIDS = 100
 
 # wifi-settings file name
-WIFI_SETTINGS_FILE_NAME = "/wifi-settings-file"
+WIFI_SETTINGS_FILE_NAME = "/wifi.cfg"
