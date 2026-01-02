@@ -382,9 +382,11 @@ def __periodic_callback(_) -> None:
         elif link_status == g_wifi_state.network.STAT_WRONG_PASSWORD:
             # Connection failed because the password is incorrect
             __give_up_connecting(SSIDScanInfo.BADAUTH)
-        elif link_status in (g_wifi_state.network.STAT_CONNECTING,
-                             g_wifi_state.network.STAT_GOT_IP):
+        elif (link_status > 0) or (link_status in (g_wifi_state.network.STAT_CONNECTING,
+                             g_wifi_state.network.STAT_GOT_IP)):
             # Connection still in progress or completed
+            # (Any unrecognised but positive value of link_status is
+            # taken to mean that the connection is in progress, e.g. 2 == CYW43_LINK_NOIP)
             if __has_valid_address():
                 # Successful
                 g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = SSIDScanInfo.SUCCESS
@@ -392,7 +394,7 @@ def __periodic_callback(_) -> None:
             elif __time_reached(g_wifi_state.connect_timeout_time):
                 # Connection failed with a timeout
                 __give_up_connecting(SSIDScanInfo.TIMEOUT)
-        elif link_status < 0:
+        else:
             # Fallback -> connection failure
             __give_up_connecting(SSIDScanInfo.FAILED)
 
