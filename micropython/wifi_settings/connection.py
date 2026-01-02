@@ -144,11 +144,17 @@ def get_ip_status_text() -> str:
     return "IPv4 address = {} netmask = {} gateway = {}".format(
         address, netmask, gateway)
 
-def get_ip() -> str:
-    """Get the IP address by itself (as a string).
+def __wifi_is_connected() -> bool:
+    """Internal: Check the connection and return True if connected with an IP address."""
+    return ((g_wifi_state.nic is not None)
+        and (g_wifi_state.nic.status() == Cyw43LinkStatus.CYW43_LINK_UP)
+        and g_wifi_state.nic.ipconfig("has_dhcp4"))
 
-    Returns "" if not known."""
-    if ((g_wifi_state.nic is None) or not g_wifi_state.nic.ipconfig("has_dhcp4")):
+def get_ip() -> str:
+    """Check the connection and return the IP address by itself (as a string).
+
+    Returns "" if not connected."""
+    if not __wifi_is_connected():
         # Not connected - return empty string
         return ""
 
