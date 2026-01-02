@@ -27,7 +27,7 @@ class SSIDType:
     SSID = 2
 
 class ConnectState:
-    UNINITIALISED = 0           # cyw43 hardware was not started
+    UNINITIALISED = 0           # WiFi hardware was not started
     INITIALISATION_ERROR = 1    # initialisation failed
     STORAGE_EMPTY_ERROR = 2     # no WiFi details are known
     DISCONNECTED = 3            # call wifi_settings_connect() to connect
@@ -46,15 +46,6 @@ class SSIDScanInfo:
     SUCCESS = 6                 # ... and it worked
     LOST = 7                    # we connected to this SSID but the connection dropped
 
-class Cyw43LinkStatus:
-    CYW43_LINK_DOWN = 0
-    CYW43_LINK_JOIN = 1
-    CYW43_LINK_NOIP = 2
-    CYW43_LINK_UP = 3
-    CYW43_LINK_FAIL = -1
-    CYW43_LINK_NONET = -2
-    CYW43_LINK_BADAUTH = -3
-
 WIFI_BSSID_SIZE = 6
 
 class WiFiState:
@@ -64,8 +55,9 @@ class WiFiState:
     connect_timeout_time = 0
     scan_holdoff_time = 0
     hw_error: str = ""
-    nic: typing.Any = None
-    timer: typing.Any = None
+    network: typing.Any = None      # micropython network module
+    nic: typing.Any = None          # micropython network.WLAN object
+    timer: typing.Any = None        # micropython Timer object
 
 g_wifi_state = WiFiState()
 
@@ -120,22 +112,33 @@ def get_connect_status_text() -> typing.Optional[str]:
     return "WiFi status is unknown ({})".format(g_wifi_state.cstate)
 
 def get_hw_status_text() -> str:
-    """Get a report on the network hardware (cyw43) status (e.g. signal strength)."""
-    if g_wifi_state.nic is None:
+    """Get a report on the network hardware status (e.g. signal strength)."""
+    if ((g_wifi_state.nic is None) or (g_wifi_state.network is None)):
         return ""
 
     link_status = g_wifi_state.nic.status()
-    hw_status_text = __enum_value_to_name(Cyw43LinkStatus, link_status) or str(link_status)
+    if link_status == g_wifi_state.network.STAT_IDLE:
+        hw_status_text = "STAT_IDLE"
+    elif link_status == g_wifi_state.network.STAT_CONNECTING:
+        hw_status_text = "STAT_CONNECTING"
+    elif link_status == g_wifi_state.network.STAT_WRONG_PASSWORD:
+        hw_status_text = "STAT_WRONG_PASSWORD"
+    elif link_status == g_wifi_state.network.STAT_NO_AP_FOUND:
+        hw_status_text = "STAT_NO_AP_FOUND"
+    elif link_status == g_wifi_state.network.STAT_CONNECT_FAIL:
+        hw_status_text = "STAT_CONNECT_FAIL"
+    elif link_status == g_wifi_state.network.STAT_GOT_IP:
+        hw_status_text = "STAT_GOT_IP"
+    else:
+        hw_status_text = str(link_status)
     rssi = g_wifi_state.nic.status('rssi')
-    return "cyw43_wifi_link_status = {} scan_active = {} rssi = {}".format(
+    return "wifi_link_status = {} rssi = {}".format(
         hw_status_text,
-        False, # network_cyw43_scan is synchronous
         rssi)
 
 def get_ip_status_text() -> str:
     """Get a report on the IP stack status (e.g. IP address)."""
-    if ((g_wifi_state.nic is None)
-    or not g_wifi_state.nic.ipconfig("has_dhcp4")):
+    if not __wifi_is_connected():
         # Not connected
         return ""
     
@@ -147,7 +150,8 @@ def get_ip_status_text() -> str:
 def __wifi_is_connected() -> bool:
     """Internal: Check the connection and return True if connected with an IP address."""
     return ((g_wifi_state.nic is not None)
-        and (g_wifi_state.nic.status() == Cyw43LinkStatus.CYW43_LINK_UP)
+        and (g_wifi_state.network is not None)
+        and (g_wifi_state.nic.status() == g_wifi_state.network.STAT_GOT_IP)
         and g_wifi_state.nic.ipconfig("has_dhcp4"))
 
 def get_ip() -> str:
@@ -363,24 +367,23 @@ def __periodic_callback(_) -> None:
             # This is reached if the storage file contains no SSIDs.
             g_wifi_state.cstate = ConnectState.STORAGE_EMPTY_ERROR
         elif __time_reached(g_wifi_state.scan_holdoff_time):
-            # No need to check cyw43_wifi_scan_active here as scans are synchronous
+            # No need to check if the scan is active here as scans are synchronous
             __scan()
 
     elif g_wifi_state.cstate == ConnectState.CONNECTING:
         # In this state, we are joining a WiFi hotspot, having found at least one
         # possibility during the scan.
         link_status = g_wifi_state.nic.status()
-        if link_status in (Cyw43LinkStatus.CYW43_LINK_DOWN,
-                           Cyw43LinkStatus.CYW43_LINK_FAIL,
-                           Cyw43LinkStatus.CYW43_LINK_NONET):
+        if link_status in (g_wifi_state.network.STAT_IDLE,
+                           g_wifi_state.network.STAT_CONNECT_FAIL,
+                           g_wifi_state.network.STAT_NO_AP_FOUND):
             # Connection failed - this hotspot must have disappeared
             __give_up_connecting(SSIDScanInfo.FAILED)
-        elif link_status == Cyw43LinkStatus.CYW43_LINK_BADAUTH:
+        elif link_status == g_wifi_state.network.STAT_WRONG_PASSWORD:
             # Connection failed because the password is incorrect
             __give_up_connecting(SSIDScanInfo.BADAUTH)
-        elif link_status in (Cyw43LinkStatus.CYW43_LINK_JOIN,
-                             Cyw43LinkStatus.CYW43_LINK_NOIP,
-                             Cyw43LinkStatus.CYW43_LINK_UP):
+        elif link_status in (g_wifi_state.network.STAT_CONNECTING,
+                             g_wifi_state.network.STAT_GOT_IP):
             # Connection still in progress or completed
             if __has_valid_address():
                 # Successful
@@ -389,7 +392,7 @@ def __periodic_callback(_) -> None:
             elif __time_reached(g_wifi_state.connect_timeout_time):
                 # Connection failed with a timeout
                 __give_up_connecting(SSIDScanInfo.TIMEOUT)
-        else:
+        elif link_status < 0:
             # Fallback -> connection failure
             __give_up_connecting(SSIDScanInfo.FAILED)
 
@@ -425,6 +428,7 @@ def init() -> None:
     try:
         # Set up to connect to an access point
         import network # type: ignore
+        g_wifi_state.network = network
         g_wifi_state.nic = network.WLAN(network.WLAN.IF_STA)
         g_wifi_state.nic.active(True)
     except Exception as e:
@@ -432,10 +436,10 @@ def init() -> None:
         g_wifi_state.hw_error = str(e)
         raise NotImplementedError() from None
 
-    # Country code setting - not available for Micropython as CYW43 is already initialised
+    # Country code setting - not available for Micropython as WiFi hardware is already initialised
     # Hostname setting - not available for Micropython as netif_set_hostname can't be called
 
-    # State initialised - we can scan immediately because CYW43 was already initialised by Micropython
+    # State initialised - we can scan immediately because hardware was already initialised by Micropython
     g_wifi_state.connect_timeout_time = __make_timeout_time_ms(configuration.CONNECT_TIMEOUT_TIME_MS)
     g_wifi_state.scan_holdoff_time = __make_timeout_time_ms(0)
     g_wifi_state.cstate = ConnectState.DISCONNECTED
