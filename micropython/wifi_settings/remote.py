@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import enum
 import hashlib
-import hmac
 import os
 import re
 import struct
@@ -62,47 +61,41 @@ ID_LAST_USER_HANDLER =      143
 ID_FIRST_HANDLER = ID_PICO_INFO_HANDLER
 NUM_HANDLERS = ID_LAST_USER_HANDLER + 1 - ID_FIRST_HANDLER
 HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
-
-PICO_ERROR_NOT_PERMITTED = -4
-MAX_WIFI_SETTINGS_FILE_SIZE = 4096
-
-# structures for ID_READ_HANDLER
-# struct wifi_settings_logical_range_t {
-#    void* start_address;
-#    uint32_t size;
-# };
-# struct read_parameter_t {
-#    wifi_settings_logical_range_t copy_from;
-# };
-READ_PARAMETER = struct.Struct("<II")
-
-# structures for ID_OTA_FIRMWARE_UPDATE_HANDLER:
-# #define WIFI_SETTINGS_OTA_HASH_SIZE 32
-# struct wifi_settings_flash_range_t {
-#    uint32_t start_address;
-#    uint32_t size;
-# };
-# typedef struct ota_firmware_update_parameter_t {
-#     wifi_settings_flash_range_t copy_from;
-#     wifi_settings_flash_range_t copy_to;
-#     uint8_t hash[WIFI_SETTINGS_OTA_HASH_SIZE];
-# } ota_firmware_update_parameter_t;
-OTA_FIRMWARE_UPDATE_PARAMETER = struct.Struct("<IIII")
+HMAC_BLOCK_SIZE = 64
 
 PROTOCOL_VERSION = 1
 AES_IV = b"\x00" * AES_BLOCK_SIZE
 PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
 
-FlashRange = typing.Tuple[int, int]
+# CBC mode, see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
+CIPHER_MODE = 2
 
-try:
-    import pyaes # type: ignore
-except ImportError:
-    print("The pyaes module is required; please install it with 'pip install pyaes' or 'apt install python3-pyaes'")
-    sys.exit(1)
+def __hmac_sha256(key: bytes, msg: bytes) -> bytes:
+    """Internal. Compute HMAC-SHA256. This can be done using the hmac module
+    with Python 3 but this is not available on Micropython."""
+    # first SHA256 start
+    h1 = hashlib.sha256()
+    assert len(key) < HMAC_BLOCK_SIZE
+    # add padded key
+    h1.update(bytes([k ^ 0x36 for k in key]))
+    h1.update(bytes([0x36 for _ in range(HMAC_BLOCK_SIZE - len(key))]))
+    # add message
+    h1.update(msg)
+    # first SHA256 calculated
+    d1 = h1.digest()
 
+    # second SHA256 start
+    h2 = hashlib.sha256()
+    # add padded key
+    h2.update(bytes([k ^ 0x5c for k in key]))
+    h2.update(bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - len(key))]))
+    # add first SHA256
+    h2.update(d1)
+    # second SHA256 calculated - this is the HMAC-SHA256 result
+    d2 = h2.digest()
+    return d2
 
-def get_pad_bytes(data_size: int, block_size: int, pad_byte = b"\x00") -> bytes:
+def __get_pad_bytes(data_size: int, block_size: int, pad_byte = b"\x00") -> bytes:
     """Pad data so that it is a multiple of block_size."""
     last_block_size = data_size % block_size
     if last_block_size == 0:
@@ -157,13 +150,12 @@ class AbstractCommunication:
         self.reader = reader
         self.writer = writer
         self.update_secret_hash = update_secret_hash
-        self.enc_receive: typing.Optional[pyaes.aes.AESModeOfOperationCBC] = None
-        self.enc_transmit: typing.Optional[pyaes.aes.AESModeOfOperationCBC] = None
+        self.enc_receive: typing.Any = None
+        self.enc_transmit: typing.Any = None
 
     def gen_auth(self, session_data: bytes) -> bytes:
         """Generate authentication code from secret and session data."""
-        return hmac.HMAC(key=self.update_secret_hash, msg=session_data,
-                    digestmod=hashlib.sha256).digest()
+        return __hmac_sha256(key=self.update_secret_hash, msg=session_data)
 
     def get_data_hash(self, data: bytes, header: bytes) -> bytes:
         """Compute hash for a message."""
@@ -347,7 +339,7 @@ class AbstractCommunication:
         blocks = [self.enc_transmit.encrypt(clear_block)]
 
         # Pad data to block boundary
-        request_data += get_pad_bytes(len(request_data), AES_BLOCK_SIZE)
+        request_data += __get_pad_bytes(len(request_data), AES_BLOCK_SIZE)
 
         # Add data
         num_blocks = len(request_data) // AES_BLOCK_SIZE
@@ -357,3 +349,155 @@ class AbstractCommunication:
 
         # Send
         await self.write_block(b"".join(blocks))
+
+class Server(AbstractCommunication):
+    """Communications specialisation for server side."""
+
+    def __init__(self,
+            handlers: typing.Dict[int, HandlerCallback],
+            update_secret: bytes,
+            reader: StreamReader, writer: StreamWriter) -> None:
+        AbstractCommunication.__init__(self, update_secret, reader, writer)
+        self.handlers = handlers
+
+    async def greeting(self) -> None:
+        """First message, server to client. Say hello."""
+        data = struct.pack("<BBB", ID_GREETING,
+                        PROTOCOL_VERSION, 0) + GREETING
+        data += get_pad_bytes(len(data), AES_BLOCK_SIZE)
+        num_blocks = len(data) // AES_BLOCK_SIZE
+        data = struct.pack("<BBB", ID_GREETING,
+                        PROTOCOL_VERSION, num_blocks) + data[3:]
+        await self.write_block(data)
+
+    async def request(self) -> bytes:
+        """Second message, client to server. Client sends the client challenge."""
+        block = await self.read_block()
+        msg_type = block[0]
+        if msg_type != ID_REQUEST:
+            raise BadMessageError(msg_type, ID_REQUEST)
+        client_challenge = block[1:]
+        return client_challenge
+
+    async def challenge(self) -> bytes:
+        """Third message, server to client. Server sends the server challenge."""
+        server_challenge = os.urandom(CHALLENGE_SIZE)
+        await self.write_block(struct.pack("<B", ID_CHALLENGE) + server_challenge)
+        return server_challenge
+
+    async def authentication(self, client_authentication: bytes) -> None:
+        """Fourth message, client to server. Client sends the client authentication."""
+        block = await self.read_block()
+        msg_type = block[0]
+        if msg_type != ID_AUTHENTICATION:
+            raise BadMessageError(msg_type, ID_AUTHENTICATION)
+
+        if client_authentication != block[1:]:
+            raise AuthenticationError()
+
+    async def response(self, server_authentication: bytes) -> None:
+        """Fifth message, server to client. Server sends the server authentication."""
+        await self.write_block(struct.pack("<B", ID_RESPONSE) + server_authentication)
+
+    async def acknowledge(self) -> None:
+        """Sixth message, client to server. Client indicates authentication is complete."""
+        block = await self.read_block()
+        msg_type = block[0]
+        if msg_type != ID_ACKNOWLEDGE:
+            raise BadMessageError(msg_type, ID_ACKNOWLEDGE)
+
+    def setup_aes(self, client_challenge: bytes, server_challenge: bytes) -> None:
+        """Generate AES keys for server."""
+        self.enc_receive = cryptolib.aes(self.get_s2c_key(
+                client_challenge, server_challenge), CIPHER_MODE, AES_IV)
+        self.enc_transmit = cryptolib.aes(self.get_c2s_key(
+                client_challenge, server_challenge), CIPHER_MODE, AES_IV)
+
+    def validate(self, msg_type: int, data_size: int, parameter: int) -> None:
+        """Raise an exception if the request is invalid."""
+        if msg_type < ID_FIRST_HANDLER:
+            raise BadHandlerError()
+        handler = self.handlers.get(msg_type, None)
+        if handler is None:
+            raise BadHandlerError()
+
+    async def run(self) -> None:
+        """Run server."""
+        try:
+            await self.setup()
+        except asyncio.IncompleteReadError:
+            # Client has disappeared
+            return
+        except ConnectionResetError:
+            # Connection lost
+            return
+
+        while True:
+            result_data = b""
+            result_value = 0
+            msg_type = ID_CORRUPT_ERROR
+            try:
+                (msg_type, request_data, parameter) = await self.receive()
+                handler = self.handlers[msg_type]
+                (result_data, result_value) = await handler.callback1(request_data, parameter)
+                msg_type = ID_OK
+                if handler.two_stage_handler:
+                    # No data is returned, all data is passed to callback2
+                    result_data = b""
+
+            except CorruptedMessageError as e:
+                msg_type = ID_CORRUPT_ERROR
+                raise
+            except BadHandlerError as e:
+                msg_type = ID_BAD_HANDLER_ERROR
+                raise
+            except BadParameterError as e:
+                msg_type = ID_BAD_PARAM_ERROR
+                raise
+            except asyncio.IncompleteReadError:
+                # Client has disappeared
+                return
+            except ConnectionResetError:
+                # Connection lost
+                return
+            except Exception as e:
+                msg_type = ID_UNKNOWN_ERROR
+                raise
+            finally:
+                # Send reply (possibly an error)
+                await self.transmit(msg_type, result_data, result_value)
+
+            # If there was no error and deferred mode was used
+            if handler.two_stage_handler:
+                await handler.callback2(result_data, result_value)
+
+async def create_server(handlers: typing.Dict[int, HandlerCallback]) -> typing.Tuple[asyncio.base_events.Server, int]:
+    server: typing.List[asyncio.Server] = []
+    config = RemotePicotoolCfg(argparse.Namespace())
+    config.set("update_secret", UPDATE_SECRET)
+    update_secret_hash = config.update_secret_hash
+
+    async def serve_callback(reader: StreamReader, writer: StreamWriter) -> None:
+        try:
+            await Server(handlers, update_secret_hash, reader, writer).run()
+        except FakeRebootError:
+            server[0].close()
+        except KeyboardInterrupt:
+            server[0].close()
+        except Exception as e:
+            print("** TEST SERVER EXCEPTION:", str(e), file=sys.stderr)
+            traceback.print_exc()
+            print("** END OF EXCEPTION REPORT", file=sys.stderr)
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    server.append(await asyncio.start_server(serve_callback, SERVER_ADDRESS))
+    await server[0].start_serving()
+    port = server[0].sockets[0].getsockname()[1]
+
+    return (server[0], port)
+
