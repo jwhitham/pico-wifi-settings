@@ -3,18 +3,25 @@ import socket
 import time
 import wifi_settings
 
-MAGIC = 20
+def __set_micropython_lwip_callback(sock, callback): # mypy should ignore this function
+    sock.setsockopt(0, 20, callback)
 
 def recv_callback(s: socket.socket) -> None:
-    b = s.recv(1)
-    print("recv_callback", b)
-    if len(b) != 0:
-        s.send(b)
+    try:
+        b = s.recv(2000)
+        while len(b) != 0:
+            print("recv_callback", b)
+            s.send(b)
+            b = s.recv(2000)
+    except OSError:
+        # e.g. EAGAIN
+        pass
 
 def listen_callback(s: socket.socket) -> None:
     (s2, v) = s.accept()
     print("listen_callback", v)
-    s2.setsockopt(0, MAGIC, recv_callback)
+    __set_micropython_lwip_callback(s2, recv_callback)
+    s2.setblocking(False)
 
 def main() -> None:
     print("Init")
@@ -32,7 +39,7 @@ def main() -> None:
     print("Server", ip, port)
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind((ip, port))
-    s.setsockopt(0, MAGIC, listen_callback)
+    __set_micropython_lwip_callback(s, listen_callback)
     s.listen(1)
     print("OK")
 
