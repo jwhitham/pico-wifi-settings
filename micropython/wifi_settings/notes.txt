@@ -102,3 +102,42 @@ Yes that works!
 
 10.88.180.232
 
+
+
+How can I implement the remote service in Python?
+I need to listen on a TCP socket and accept connections.
+LwIP handles this with callback functions and I have seen that exec_user_callback is used.
+
+I think that asyncio could work, but it would require the involvement of user code,
+which would need to initialise wifi-settings while an asyncio event loop was running.
+Or would it? could we start a task and then return?
+
+One bad thing about asyncio is that we have to know the ip address in order to start_server.
+I expect it would be necessary to start_server again if the network interface changed
+e.g. new hotspot.
+
+It is possible to do:
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(asyncio.start_server(serve_callback, ip, port))
+
+without actually doing asyncio.run(...) however the server won't actually start until
+asyncio.run(...) is reached. So, buggy user code that doesn't reach "run" (or
+crashes) will also prevent remote access. If "run" exits early then the socket will still
+accept connections but serve_callback won't service them until "run" is called again.
+
+I might be able to create a new event loop just for the server which is executed by a timer.
+It would process all pending events. But the trouble is that most activities would have to wait
+for the timer. The correct interrupt to use would be one associated with the network;
+the tcp_recv and tcp_accept functions in LwIP are the correct ones.
+
+Using the socket module - the trouble here is that I'd need to register a callback
+somehow, to be called whenever a connection is accepted or data is received. This is not
+normally a feature of the socket module...
+
+The secret is to call lwip_socket_setsockopt with args[2] = 20 and args[3] = a callback function
+
+
+   
+
+
+
