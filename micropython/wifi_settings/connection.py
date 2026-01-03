@@ -423,8 +423,8 @@ def __periodic_callback_isr(_) -> None:
 def init() -> None:
     """Initialise pico-wifi-settings for Micropython."""
     if g_wifi_state.cstate != ConnectState.UNINITIALISED:
-        # init() not allowed in this state
-        raise ValueError()
+        # init() not allowed in this state - do nothing
+        return
 
     g_wifi_state.cstate = ConnectState.INITIALISATION_ERROR
     try:

@@ -9,18 +9,20 @@
 
 import argparse
 import asyncio
-import enum
 import hashlib
 import os
-import re
 import struct
-import socket
 import sys
 import traceback
-import typing
 from asyncio import StreamReader, StreamWriter
 from pathlib import Path
 from abc import abstractmethod
+
+# Type-checking
+try:
+    import typing
+except ImportError:
+    pass
 
 PORT_NUMBER =               1404
 RESPONDER_REQUEST_MAGIC =  b"PWS?"
@@ -31,6 +33,7 @@ CHALLENGE_SIZE =            15
 AUTHENTICATION_SIZE =       15
 AES_BLOCK_SIZE =            16
 DATA_HASH_SIZE =            7
+HMAC_BLOCK_SIZE =           64
 
 ID_GREETING =               70      # s->c
 ID_REQUEST =                71      # s<-c
@@ -61,7 +64,6 @@ ID_LAST_USER_HANDLER =      143
 ID_FIRST_HANDLER = ID_PICO_INFO_HANDLER
 NUM_HANDLERS = ID_LAST_USER_HANDLER + 1 - ID_FIRST_HANDLER
 HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
-HMAC_BLOCK_SIZE = 64
 
 PROTOCOL_VERSION = 1
 AES_IV = b"\x00" * AES_BLOCK_SIZE
@@ -471,11 +473,30 @@ class Server(AbstractCommunication):
             if handler.two_stage_handler:
                 await handler.callback2(result_data, result_value)
 
-async def create_server(handlers: typing.Dict[int, HandlerCallback]) -> typing.Tuple[asyncio.base_events.Server, int]:
-    server: typing.List[asyncio.Server] = []
-    config = RemotePicotoolCfg(argparse.Namespace())
-    config.set("update_secret", UPDATE_SECRET)
-    update_secret_hash = config.update_secret_hash
+def __update_secret_hash(self) -> bytes:
+    """Turn the secret provided by the user into a 32-byte hash.
+
+    This is derived from the update_secret= option in the wifi-settings file
+    """
+    update_secret_text = storage.get_value_for_key("update_secret")
+    if not update_secret_text:
+        # If there is no update_secret then the remote service is disabled
+        return b""
+
+    secret_hash = b"\x00" * 32
+    secret_bytes = self.update_secret_text.encode("utf-8")
+    for i in range(4096):
+        secret_hash = hashlib.sha256(secret_hash + secret_bytes).digest()
+
+    return secret_hash
+
+def start_server() -> bool:
+    update_secret_hash = __update_secret_hash()
+    if not update_secret_hash:
+        # If there is no update_secret then the remote service is disabled
+        return
+
+    # EDIT HORIZON
 
     async def serve_callback(reader: StreamReader, writer: StreamWriter) -> None:
         try:
