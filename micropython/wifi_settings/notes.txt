@@ -139,7 +139,32 @@ The secret is to call lwip_socket_setsockopt with args[2] = 20 and args[3] = a c
 Using socket.socket with the callback registration it is even possible to bind the
 socket to "" before an IP address is obtained, indeed before even the wifi connection is available,
 and this will still work!
-   
+
+Could this callback be used with asyncio to run through the loop on each event? Yes in principle,
+but that would require access to the socket.socket() object used for the server, and it looks like
+Micropython asyncio doesn't expose that. I get a Server object from start_server but it doesn't have
+the sockets field. Therefore the remote code probably needs to follow the C pattern and use
+callbacks for everything.
 
 
 
+Random numbers?
+On Pico mp_os_urandom uses rosc_random_u8 whereas random.* is using a PRNG.
+mbedtls also uses this
+
+    320 uint8_t rosc_random_u8(size_t cycles) {
+    321     static uint8_t r;
+    322     for (size_t i = 0; i < cycles; ++i) {
+    323         r = ((r << 1) | rosc_hw->randombit) ^ (r & 0x80 ? POLY : 0);
+    324         mp_hal_delay_us_fast(1);
+    325     }
+    326     return r;
+    327 }
+
+The C program used get_rand_128. This uses the ROSC as one of its entropy sources
+on RP2040. On RP2350 there is a hardware RNG which is also used. Micropython does not use this.
+The random numbers may not be as good quality.
+
+
+Is there a better way to manage a data buffer in Micropython? bytes is immutable,
+so self.data += block will reallocate

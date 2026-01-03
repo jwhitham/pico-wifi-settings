@@ -66,11 +66,801 @@ NUM_HANDLERS = ID_LAST_USER_HANDLER + 1 - ID_FIRST_HANDLER
 HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
 
 PROTOCOL_VERSION = 1
-AES_IV = b"\x00" * AES_BLOCK_SIZE
+AES_IV = ZERO_BLOCK = b"\x00" * AES_BLOCK_SIZE
 PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
 
-# CBC mode, see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
+# Magic number for CBC mode
+# see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
 CIPHER_MODE = 2
+
+# Note- the structure of a reply_header or request_header is as follows:
+# typedef struct enc_message_header_t {
+#    uint32_t    data_size;
+#    int32_t     parameter_or_result;
+#    uint8_t     msg_type;
+#    uint8_t     data_hash[DATA_HASH_SIZE];
+# } enc_message_header_t;
+# The size of this structure should be AES_BLOCK_SIZE
+HEADER_STRUCT = "<IIB7s"
+HEADER_DATA_HASH_OFFSET = AES_BLOCK_SIZE - DATA_HASH_SIZE
+
+def __unpack_header(header: bytes) -> typing.Tuple[int, int, int, bytes]:
+    return struct.unpack(HEADER_STRUCT, header)
+
+def __pack_header(data_size: int, parameter_or_result: int,
+            msg_type: int, data_hash: bytes = ZERO_BLOCK[:DATA_HASH_SIZE]) -> bytes:
+    return struct.pack(HEADER_STRUCT, header)
+
+class ReceiveState:
+    # Authentication states (unencrypted)
+    SEND_GREETING = 1
+    EXPECT_REQUEST = 2
+    SEND_CHALLENGE = 3
+    EXPECT_AUTHENTICATION = 4
+    SEND_AUTHENTICATION = 5
+    EXPECT_ACKNOWLEDGE = 6
+    SEND_BAD_MSG_ERROR = 7
+    SEND_AUTH_ERROR = 8
+    SEND_NO_SECRET_ERROR = 9
+    # Encrypted communication states
+    EXPECT_ENC_REQUEST_HEADER = 10
+    EXPECT_ENC_REQUEST_PAYLOAD = 11
+    SEND_ENC_REPLY_HEADER = 12
+    SEND_ENC_REPLY_PAYLOAD = 13
+    SEND_CORRUPT_ERROR = 14
+    SEND_BAD_PARAM_ERROR = 15
+    SEND_BAD_HANDLER_ERROR = 16
+    SEND_ENC_REPLY_HEADER_WITH_CALLBACK2 = 17
+    # Special state when waiting to finish sending
+    EXECUTE_CALLBACK2 = 18
+    // Disconnected state
+    DISCONNECT = 19
+
+
+HandlerCallback1 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any],
+                                   typing.Tuple[bytes, int]]]
+# (msg_type, request_data_buffer, input_parameter, arg) -> (reply_data_buffer, return_value)
+HandlerCallback2 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any]]]
+# (msg_type, reply_data_buffer, return_value, arg) -> None
+
+class HandlerCallbackArg:
+    callback1: HandlerCallback1
+    callback2: HandlerCallback2
+    arg: typing.Any
+
+g_handler_table: typing.List[HandlerCallbackArg] = [HandlerCallbackArg() for _ in range(NUM_HANDLERS)]
+g_hmac_padded_key_1: bytes = b"\x00" * HMAC_DIGEST_SIZE
+g_hmac_padded_key_2: bytes = b"\x00" * HMAC_DIGEST_SIZE
+g_secret_valid: bool = False
+
+class Session:
+    data: bytes = b"" # MAX_DATA_SIZE
+    client_challenge: bytes = b"" # CHALLENGE_SIZE
+    server_challenge: bytes = b"" # CHALLENGE_SIZE
+    output_block: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
+    output_block_ready: bool = False
+    input_block: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
+    input_block_offset: int = 0
+    decrypt: cryptolib.aes
+    encrypt: cryptolib.aes
+    reply_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
+    request_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
+    state: ReceiveState = ReceiveState.ID_GREETING
+    data_index: int = 0
+
+
+    def __generate_authentication(self, append_code: bytes) -> bytes:
+        """Internal. Compute HMAC-SHA256. This can be done using the hmac module
+        with Python 3 but this is not available on Micropython."""
+        # first SHA256 start
+        h1 = hashlib.sha256()
+        # add padded key and message
+        h1.update(g_hmac_padded_key_1)
+        h1.update(self.client_challenge)
+        h1.update(self.server_challenge)
+        h1.update(append_code)
+        # first SHA256 calculated
+        d1 = h1.digest()
+
+        # second SHA256 start
+        h2 = hashlib.sha256()
+        # add padded key and first SHA256
+        h2.update(g_hmac_padded_key_2)
+        h2.update(d1)
+        # second SHA256 calculated - this is the HMAC-SHA256 result
+        d2 = h2.digest()
+        return d2
+
+    def __generate_keys(self) -> None:
+        """Internal. Generate encryption and decryption keys
+        and Micropython cryptolib objects."""
+        raw_key = self.__generate_authentication("SK")
+        self.encrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
+
+        raw_key = self.__generate_authentication("CK")
+        self.decrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
+
+    def __generate_enc_data_hash(self, header: bytes) -> bytes:
+        """Internal. Generate and return a hash for the reply header and payload (if any).
+
+        The first part of the header is hashed, ignoring the data hash bytes at the end.
+        All payload data is hashed.
+        The first DATA_HASH_SIZE bytes of the SHA-256 are returned.
+        """
+        h1 = hashlib.sha256()
+        h1.update(header[:HEADER_DATA_HASH_OFFSET])
+        h1.update(self.data)    # Note: data size expected to match header.data_size
+        return h1.digest()[:DATA_HASH_SIZE]
+
+    def __generate_enc_header_for_error(self, msg_type: int) -> None:
+        """Internal. Generate an encrypted reply header containing the error msg_type.
+        The result is stored in self.reply_header (clear) and self.output_block (encrypted)."""
+
+        # Only the msg_type and data_hash fields are used - everything else is 0
+        self.reply_header = self.__pack_header(0, 0, msg_type, self.__generate_enc_data_hash(
+                                self.__pack_header(0, 0, msg_type)))
+
+        # Encrypt
+        self.output_block = self.encrypt.encrypt(self.reply_header)
+        self.state = ReceiveState.DISCONNECT
+
+    def __generate_clear_header_for_error(self, msg_type: int) -> None:
+        """Internal. Generate an unencrypted reply header containing the error msg_type.
+        The result is stored in self.output_block."""
+        self.output_block = bytes([msg_type]) + ZERO_BLOCK[1:]
+        self.state = ReceiveState.DISCONNECT
+
+    def __generate_output_block(self) -> bool:
+        """Internal. Generate an appropriate output for the current state
+        and store it in self.output_block."""
+        if self.state == ReceiveState.SEND_GREETING:
+            # First message, server to client. Say hello.
+            # (self.data contains a greeting message)
+            self.output_block = self.data[self.data_index : self.data_index + AES_BLOCK_SIZE]
+            self.data_index += AES_BLOCK_SIZE
+            if self.data_index >= self.reply_header.data_size:
+                self.state = ReceiveState.EXPECT_REQUEST
+            return True
+        elif self.state == ReceiveState.EXPECT_REQUEST:
+            # Second message, client to server. Client sends the client challenge.
+            return False
+        elif self.state == ReceiveState.SEND_CHALLENGE:
+            # Third message, server to client. Server sends the server challenge.
+            self.output_block = bytes([ID_CHALLENGE]) + os.urandom(CHALLENGE_SIZE)
+            self.state = ReceiveState.EXPECT_AUTHENTICATION
+            return True
+        elif self.state == ReceiveState.EXPECT_AUTHENTICATION:
+            # Fourth message, client to server. Client sends the client authentication.
+            return False
+        elif self.state == ReceiveState.SEND_AUTHENTICATION:
+            # Fifth message, server to client. Server sends the server authentication.
+            self.output_block = bytes([ID_RESPONSE]) + self.__generate_authentication("SA")
+            self.state = ReceiveState.EXPECT_ACKNOWLEDGE
+            return True
+        elif self.state == ReceiveState.EXPECT_ACKNOWLEDGE:
+            # Sixth message, client to server. Client indicates authentication is complete.
+            return False
+        elif self.state == ReceiveState.SEND_BAD_MSG_ERROR:
+            # Report bad message error to the client.
+            self.__generate_clear_header_for_error(ID_BAD_MSG_ERROR)
+            return True
+        elif self.state == ReceiveState.SEND_AUTH_ERROR:
+            # Report authentication error to the client.
+            self.__generate_clear_header_for_error(ID_AUTH_ERROR)
+            return True
+        elif self.state == ReceiveState.SEND_NO_SECRET_ERROR:
+            # Report 'no secret' error to the client.
+            self.__generate_clear_header_for_error(ID_NO_SECRET_ERROR)
+            return True
+        elif self.state == ReceiveState.SEND_CORRUPT_ERROR:
+            # Encrypted stage. Report corrupt encrypted data error to the client.
+            self.__generate_enc_header_for_error(ID_CORRUPT_ERROR)
+            return True
+        elif self.state == ReceiveState.SEND_BAD_PARAM_ERROR:
+            # Encrypted stage. Report bad parameter error to the client.
+            self.__generate_enc_header_for_error(ID_BAD_PARAM_ERROR)
+            return True
+        elif self.state == ReceiveState.SEND_BAD_HANDLER_ERROR:
+            # Encrypted stage. Report bad handler error to the client.
+            self.__generate_enc_header_for_error(ID_BAD_HANDLER_ERROR)
+            return True
+        elif self.state == ReceiveState.EXPECT_ENC_REQUEST_HEADER:
+            # Encrypted stage. Awaiting request from the client.
+            return False
+        elif self.state == ReceiveState.EXPECT_ENC_REQUEST_PAYLOAD:
+            # Encrypted stage. Awaiting payload from the client.
+            return False
+        elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER:
+            # Encrypted stage. Send reply header to the client.
+            self.output_block = self.encrypt.encrypt(self.reply_header)
+            if len(self.data) == 0:
+                # Header only - no payload
+                self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
+            else:
+                self.state = ReceiveState.SEND_ENC_REPLY_PAYLOAD
+            return True
+        elif self.state == ReceiveState.SEND_ENC_REPLY_PAYLOAD:
+            # Encrypted stage. Send payload data to the client.
+            self.output_block = self.encrypt.encrypt(
+                    self.data[self.data_index : self.data_index + AES_BLOCK_SIZE])
+            self.data_index += AES_BLOCK_SIZE
+            if self.data_index >= len(self.data):
+                # Finished
+                self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
+            return True
+        elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2:
+            # Encrypted stage. Send reply header to the client (callback2 pending).
+            self.output_block = self.encrypt.encrypt(self.reply_header)
+            self.state = ReceiveState.EXECUTE_CALLBACK2
+            return True
+        elif self.state == ReceiveState.EXECUTE_CALLBACK2:
+            # Execute callback2 handler when header has been sent (nothing should be sent).
+            return False
+        elif self.state == ReceiveState.DISCONNECT:
+            return False
+        return False
+
+    def __handle_enc_request_end(self) -> None:
+        """Internal. Process the end of an encrypted request,
+        i.e. verify integrity, call a handler, prepare to send reply data."""
+
+        # Check data hash is correct
+        expect_hash = self.__generate_enc_data_hash(self.request_header)
+        if expect_hash != self.request_header[ENC_HEADER_DATA_HASH_OFFSET:]:
+            self.state = ReceiveState.SEND_CORRUPT_ERROR
+            return
+
+        # Process the request, getting new data, data_size, parameter
+        (_, parameter, msg_type, _) = __unpack_header(self.request_header)
+        handler_id = msg_type - ID_FIRST_HANDLER
+
+        # Check handler is valid (this was already checked, but g_handler_table may have changed)
+        if ((handler_id >= NUM_HANDLERS)
+        or (handler_id < 0)
+        or not (g_handler_table[handler_id].callback1
+                or g_handler_table[handler_id].callback2)):
+            self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+            return
+
+        self.data = b""
+        result = 0
+
+        if g_handler_table[handler_id].callback1:
+            # call first handler
+            return_value = g_handler_table[handler_id].callback1(
+                    msg_type, self.data, parameter, g_handler_table[handler_id].arg)
+            # expect a return like (reply_data_buffer, return_value)
+            if ((type(return_value) != tuple)
+            or (len(return_value) != 2)
+            or (type(return_value[0]) != bytes)
+            or (type(return_value[1]) != int)):
+                self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+                return
+            self.data = return_value[0]
+            result = return_value[1]
+
+            # Limit data size as the C implementation does
+            if len(self.data) > MAX_DATA_SIZE:
+                self.data = self.data[:MAX_DATA_SIZE]
+
+        self.data_index = 0
+
+        if g_handler_table[handler_id].callback2:
+            # prepare to call the second handler; no data will be sent via the network,
+            # but it will be available for callback2. The request header is repacked with
+            # new information to be used by callback2.
+            self.request_header = __pack_header(len(self.data), result, ID_OK)
+            self.state = ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2
+            reply_data_size = 0
+        else:
+            # no second handler, return data
+            self.state = ReceiveState.SEND_ENC_REPLY_HEADER
+            reply_data_size = len(self.data)
+
+        # Generate reply header
+        self.reply_header = self.__pack_header(reply_data_size, result, ID_OK,
+            self.__generate_enc_data_hash(self.__pack_header(reply_data_size, result, ID_OK)))
+
+    def __handle_enc_request_start(self) -> None:
+        """Internal. Process the start of an encrypted request,
+        i.e. check the header and start the input data transfer."""
+        # Decrypt 
+        self.request_header = self.decrypt.decrypt(self.input_block)
+
+        # Check handler ID is within the allowed range
+        (data_size, parameter, msg_type, _) = __unpack_header(self.request_header)
+        handler_id = msg_type - ID_FIRST_HANDLER
+        if ((handler_id >= NUM_HANDLERS)
+        or (handler_id < 0)
+        or not (g_handler_table[handler_id].callback1
+                or g_handler_table[handler_id].callback2)) {
+            self.state = SEND_BAD_HANDLER_ERROR
+            return
+
+        # Check parameters are valid, start processing the request
+        if data_size > MAX_DATA_SIZE: {
+            self.state = SEND_BAD_PARAM_ERROR
+            return
+
+        # Prepare for receiving the request payload
+        self.data = b""
+        if data_size == 0:
+            # There is no payload - go direct to the end
+            self.__handle_enc_request_end()
+        else:
+            # Payload needed
+            self.state = ReceiveState.EXPECT_ENC_REQUEST_PAYLOAD
+
+    def __handle_enc_request_add_data(self) -> None:
+        """Internal. Process data input for an encrypted request."""
+        self.data += self.decrypt.decrypt(self.input_block)
+        (data_size, _, _, _) = __unpack_header(self.request_header)
+        if len(self.data) >= data_size:
+            # No more blocks
+            self.__handle_enc_request_end()
+
+    def __handle_input_block(self) -> bool:
+        """Internal. Handle the input appropriately for the current state."""
+        if self.state == ReceiveState.SEND_GREETING:
+            # First message, server to client. Say hello.
+            return False
+        elif self.state == ReceiveState.EXPECT_REQUEST:
+            # Second message, client to server. Client sends the client challenge.
+            if self.input_block[0] != ID_REQUEST:
+                self.state = ReceiveState.SEND_BAD_MSG_ERROR
+            elif not g_secret_valid: {
+                self.state = ReceiveState.SEND_NO_SECRET_ERROR
+            else:
+                self.client_challenge = self.input_block[1:]
+                self.state = ReceiveState.SEND_CHALLENGE
+            }
+            return True
+        elif self.state == ReceiveState.SEND_CHALLENGE:
+            # Third message, server to client. Server sends the server challenge.
+            return False
+        elif self.state == ReceiveState.EXPECT_AUTHENTICATION:
+            # Fourth message, client to server. Client sends the client authentication.
+            if block[0] != ID_AUTHENTICATION:
+                self.state = ReceiveState.SEND_BAD_MSG_ERROR
+            else:
+                check_authentication = self.__generate_authentication("CA")
+                if check_authentication != block[1:]:
+                    self.state = ReceiveState.SEND_AUTH_ERROR
+                else:
+                    self.state = ReceiveState.SEND_AUTHENTICATION
+            return True
+        elif self.state == ReceiveState.SEND_AUTHENTICATION:
+            # Fifth message, server to client. Server sends the server authentication.
+            return False
+        elif self.state == ReceiveState.EXPECT_ACKNOWLEDGE:
+            # Sixth message, client to server. Client indicates authentication is complete.
+            if block[0] != ID_ACKNOWLEDGE:
+                self.state = ReceiveState.SEND_BAD_MSG_ERROR
+            else:
+                self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
+                # Session keys can be generated now
+                self.__generate_keys()
+            return True
+        elif self.state == ReceiveState.SEND_BAD_MSG_ERROR:
+            # Report bad message error to the client.
+            return False
+        elif self.state == ReceiveState.SEND_BAD_PARAM_ERROR:
+            # Report bad request parameter error to the client.
+            return False
+        elif self.state == ReceiveState.SEND_BAD_HANDLER_ERROR:
+            # Report bad handler error to the client.
+            return False
+        elif self.state == ReceiveState.SEND_AUTH_ERROR:
+            # Report authentication error to the client.
+            return False
+        elif self.state == ReceiveState.SEND_NO_SECRET_ERROR:
+            # Report "no secret" error to the client.
+            return False
+        elif self.state == ReceiveState.SEND_CORRUPT_ERROR:
+            # Report corrupt block error to the client.
+            return False
+        elif self.state == ReceiveState.EXPECT_ENC_REQUEST_HEADER:
+            # Encrypted stage. Awaiting request from the client.
+            self.__handle_enc_request_start()
+            return True
+        elif self.state == ReceiveState.EXECUTE_CALLBACK2:
+            # Execute callback2 handler when header has been sent (nothing should be received).
+            return False
+        elif self.state == ReceiveState.EXPECT_ENC_REQUEST_PAYLOAD:
+            # Encrypted stage. Awaiting payload data from the client.
+            self.__handle_enc_request_add_data()
+            return True
+        elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER:
+            # Encrypted stage. Send reply header to the client.
+            return False
+        elif self.state == ReceiveState.SEND_ENC_REPLY_PAYLOAD:
+            # Encrypted stage. Send payload data to the client.
+            return False
+        elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2:
+            # Encrypted stage. Send reply header to the client (callback2 handler pending).
+            return False
+        elif self.state == ReceiveState.DISCONNECT:
+            return False
+        return False
+
+# EDIT HORIZON
+static void server_tcp_close(struct tcp_pcb *client_pcb) {
+    // Disable all callbacks
+    tcp_arg(client_pcb, NULL);
+    tcp_sent(client_pcb, NULL);
+    tcp_recv(client_pcb, NULL);
+    tcp_err(client_pcb, NULL);
+    // close
+    tcp_close(client_pcb);
+}
+
+static void server_err(void *arg, err_t unused) {
+    // Called if there is a TCP error with the connection or from the remote side.
+    // This callback:
+    // * must free the arg pointer (if not NULL)
+    // * should ignore the err parameter
+    // * might be called with arg == NULL
+    struct session_t* session = (struct session_t*) arg;
+    free(session);
+}
+
+static void send_while_able(struct session_t* session, struct tcp_pcb* client_pcb) {
+    while (true) {
+        // check if an output block is waiting to be sent
+        if (!self.output_block_ready) {
+            // try to generate an output block
+            if (!generate_output_block(session)) {
+                // There's nothing to send
+                return;
+            }
+            self.output_block_ready = true;
+        }
+
+        // try to send a block
+        // Note: can't use tcp_sndbuf to tell if this will succeed, so we have
+        // to generate a block beforehand.
+        err_t err = tcp_write(client_pcb, self.output_block,
+                        AES_BLOCK_SIZE, TCP_WRITE_FLAG_COPY);
+        if (err == ERR_OK) {
+            // success, block has been sent
+            self.output_block_ready = false;
+        } else if (err == ERR_MEM) {
+            // failure, we should try again later, after some data has been sent
+            return;
+        } else {
+            // some other error - abandon the connection
+            self.state = DISCONNECT;
+            return;
+        }
+    }
+}
+
+static err_t server_recv(void* arg, struct tcp_pcb* client_pcb, struct pbuf* p, err_t err) {
+    // Called when a packet is received or when the connection is closed by the other side
+    //
+    // The lwip documentation isn't clear about the expected behaviour for the tcp_recv callback,
+    // but based on looking at lwip examples such as netio.c, tcpecho_raw.c, smtp.c, httpd.c,
+    // the tcp_recv callback:
+    // * must free the pbuf (p) if p != NULL
+    // * must call tcp_recved to indicate how many bytes were received
+    // * may call tcp_close
+    // * can ignore the err parameter
+    // * must return either ERR_OK or ERR_ABRT
+    //   * even if called with err != ERR_OK - lwip examples generally just ignore this
+    //   * if returning ERR_ABRT, there are special requirements:
+    //     it must first call tcp_abort and free any session data.
+    // * will be called with p == NULL if the remote side closed the connection,
+    //   and in this case it should call tcp_close
+    // * might be called with arg == NULL (in which case tcp_close is correct behaviour)
+    struct session_t* session = (struct session_t*) arg;
+
+    if ((!p) || (!session)) {
+        // connection has been closed by the other side
+        free(session);
+        server_tcp_close(client_pcb);
+        if (p) {
+            pbuf_free(p);
+        }
+        return ERR_OK;
+    }
+
+    // copy in to blocks
+    uint8_t* payload = (uint8_t*) p->payload;
+    uint16_t payload_size = (uint) p->len;
+    bool input_buffer_overflow = false;
+
+    for (uint16_t recv_index = 0; recv_index < payload_size; recv_index++) {
+        self.input_block[(uint) self.input_block_offset] = payload[(uint) recv_index];
+        self.input_block_offset++;
+        if (self.input_block_offset >= AES_BLOCK_SIZE) {
+            // Process the block
+            if (!handle_input_block(session)) {
+                // Unable to handle input right now!
+                // (There is no buffer space for this.)
+                // We will disconnect, possibly after sending an error message
+                input_buffer_overflow = true;
+                break;
+            }
+            self.input_block_offset = 0;
+        }
+    }
+
+    // mark data as received, free pbuf
+    tcp_recved(client_pcb, payload_size);
+    pbuf_free(p);
+
+    // disconnect before sending anything if requested by handle_input_block
+    if (self.state == DISCONNECT) {
+        free(session);
+        server_tcp_close(client_pcb);
+        return ERR_OK;
+    }
+
+    // Send data (if any)
+    // send_while_able may also enter the DISCONNECT state, but in this case,
+    // don't disconnect immediately, wait for server_sent to be called.
+    send_while_able(session, client_pcb);
+
+    // If an overflow was detected, disconnect after sending an error message
+    if (input_buffer_overflow) {
+        self.state = DISCONNECT;
+    }
+    return ERR_OK;
+}
+
+static err_t server_sent(void *arg, struct tcp_pcb *client_pcb, uint16_t unused) {
+    // Called when a packet is sent, and so there is more space is the output buffer,
+    // possibly allowing more data to be sent.
+    //
+    // This callback:
+    // * may call tcp_close
+    // * must return ERR_OK
+    // * might be called with arg == NULL (in which case tcp_close is correct behaviour)
+    struct session_t* session = (struct session_t*) arg;
+
+    if (!session) {
+        server_tcp_close(client_pcb);
+        return ERR_OK;
+    }
+
+    // Send data?
+    send_while_able(session, client_pcb);
+
+    if (self.state == EXECUTE_CALLBACK2) {
+        // Data has been sent, execute callback2 if it exists (close first)
+        server_tcp_close(client_pcb);
+
+        uint8_t handler_id = self.request_header.msg_type - ID_FIRST_HANDLER;
+
+        if ((handler_id < NUM_HANDLERS)
+        && (g_handler_table[(uint) handler_id].callback2)) {
+            g_handler_table[(uint) handler_id].callback2(
+                self.request_header.msg_type,
+                self.data,
+                self.request_header.data_size,
+                self.request_header.parameter_or_result,
+                g_handler_table[(uint) handler_id].arg);
+        }
+        // Result of executing callback2 cannot be reported
+        free(session);
+    } else if (self.state == DISCONNECT) {
+        free(session);
+        server_tcp_close(client_pcb);
+    }
+    return ERR_OK;
+}
+
+static err_t server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
+    // Called for a new connection
+    //
+    // This callback:
+    // * should not call tcp_close
+    // * must return ERR_OK or ERR_VAL or ERR_MEM
+    //   * ERR_MEM if memory couldn't be allocated
+    //   * ERR_VAL if (err != ERR_OK) || !pcb
+    // * must call tcp_sent, tcp_recv, tcp_err to register callbacks
+    // * must call tcp_arg with session data
+    if ((err != ERR_OK) || !client_pcb) {
+        return ERR_VAL; 
+    }
+
+    struct session_t* session = calloc(1, sizeof(struct session_t));
+    if (!session) {
+        return ERR_MEM;
+    }
+
+    tcp_arg(client_pcb, session);
+    tcp_sent(client_pcb, server_sent);
+    tcp_recv(client_pcb, server_recv);
+    tcp_err(client_pcb, server_err);
+
+    // Set up greeting
+    int string_size = snprintf((char*) self.data, MAX_DATA_SIZE,
+        "xxx\r%s\rpico-wifi-settings version " WIFI_SETTINGS_VERSION_STRING "\r\n",
+        wifi_settings_get_board_id_hex());
+    // bytes 0 .. 2 are fixed fields in the reply:
+    self.data[0] = ID_GREETING;
+    self.data[1] = PROTOCOL_VERSION;
+    self.data[2] = (uint8_t) ((string_size + AES_BLOCK_SIZE - 1) / AES_BLOCK_SIZE);
+    // bytes 4 .. 19 contain the board ID in uppercase hex format
+    self.reply_header.data_size = ((uint32_t) self.data[2]) * AES_BLOCK_SIZE;
+    // bytes 20 .. <unspecified> contain UTF-8 text that can be printed
+
+    self.state = SEND_GREETING;
+    send_while_able(session, client_pcb);
+    return ERR_OK;
+}
+
+static void responder_recv(
+        void* unused,
+        struct udp_pcb *pcb,
+        struct pbuf *p,
+        const ip_addr_t *addr,
+        u16_t port) {
+  
+    // Copy the request into a responder_packet_t
+    responder_packet_t mp;
+    memset(&mp, 0, sizeof(mp));
+    if (p->payload) {
+        memcpy(&mp, p->payload, (sizeof(mp) < p->len) ? sizeof(mp) : p->len);
+    }
+    pbuf_free(p); // No longer required
+
+    // Check magic
+    if (memcmp(mp.magic, RESPONDER_REQUEST_MAGIC, sizeof(mp.magic)) != 0) {
+        // Invalid request - not magic
+        return;
+    }
+    // Check board ID
+    mp.board_id_hex[BOARD_ID_SIZE * 2] = '\0';
+    const char* my_board_id_hex = wifi_settings_get_board_id_hex();
+    if (strstr(my_board_id_hex, (const char*) mp.board_id_hex) == NULL) {
+        // Request is for a different board
+        return;
+    }
+    // Respond to request with complete board id
+    memcpy(mp.magic, RESPONDER_REPLY_MAGIC, sizeof(mp.magic));
+    memcpy(mp.board_id_hex, my_board_id_hex, BOARD_ID_SIZE * 2);
+
+    p = pbuf_alloc(PBUF_TRANSPORT, sizeof(responder_packet_t), PBUF_RAM);
+    if (!p) {
+        return;
+    }
+    memcpy(p->payload, &mp, sizeof(responder_packet_t));
+    udp_sendto(pcb, p, addr, port);
+    pbuf_free(p);
+}
+
+int wifi_settings_remote_set_two_stage_handler(
+        uint8_t msg_type,
+        handler_callback1_t callback1,
+        handler_callback2_t callback2,
+        void* arg) {
+    uint8_t handler_id = msg_type - ID_FIRST_HANDLER;
+    if (handler_id >= NUM_HANDLERS) {
+        return PICO_ERROR_INVALID_ARG;
+    }
+    g_handler_table[(uint) handler_id].callback1 = callback1;
+    g_handler_table[(uint) handler_id].callback2 = callback2;
+    g_handler_table[(uint) handler_id].arg = arg;
+    return PICO_ERROR_NONE;
+}
+
+int wifi_settings_remote_set_handler(
+        uint8_t msg_type,
+        handler_callback1_t callback,
+        void* arg) {
+    return wifi_settings_remote_set_two_stage_handler(msg_type, callback, NULL, arg);
+}
+
+void wifi_settings_remote_update_secret() {
+    g_secret_valid = false;
+    memset(secret_hashed, 0, HMAC_DIGEST_SIZE);
+
+    uint8_t update_secret[128];
+    uint update_secret_size = sizeof(update_secret);
+
+    if (wifi_settings_get_value_for_key(
+            "update_secret", (char*) update_secret, &update_secret_size)
+    && (update_secret_size > 0)) {
+        mbedtls_sha256_context ctx;
+        mbedtls_sha256_init(&ctx);
+        for (uint i = 0; i < 4096; i++) {
+            if ((0 != mbedtls_sha256_starts(&ctx, 0))
+            || (0 != mbedtls_sha256_update(&ctx, secret_hashed, HMAC_DIGEST_SIZE))
+            || (0 != mbedtls_sha256_update(&ctx, update_secret, update_secret_size))
+            || (0 != mbedtls_sha256_finish(&ctx, secret_hashed))) {
+                panic("update_secret sha256 failed");
+            }
+        }
+        mbedtls_sha256_free(&ctx);
+        g_hmac_padded_key_1 = (bytes([k ^ 0x36 for k in secret_hashed])
+                + bytes([0x36 for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
+        g_hmac_padded_key_2 = (bytes([k ^ 0x5c for k in secret_hashed])
+                + bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
+        g_secret_valid = true;
+    }
+
+
+}
+
+int wifi_settings_remote_init() {
+    int pico_err = PICO_ERROR_NONE; 
+
+    // We will be calling LWIP functions, so the lock is needed
+    cyw43_arch_lwip_begin();
+    if (g_remote_service_pcb) {
+        goto end;
+    }
+
+    // Load secret
+    wifi_settings_remote_update_secret();
+
+    // Install handlers for messages
+    wifi_settings_remote_set_handler(ID_PICO_INFO_HANDLER,
+            wifi_settings_pico_info_handler, NULL);
+    wifi_settings_remote_set_handler(ID_UPDATE_HANDLER,
+            wifi_settings_update_handler, NULL);
+    wifi_settings_remote_set_two_stage_handler(
+            ID_UPDATE_REBOOT_HANDLER,
+            wifi_settings_update_reboot_handler1,
+            wifi_settings_update_reboot_handler2, NULL);
+    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings remote file updates"));
+#ifdef ENABLE_REMOTE_MEMORY_ACCESS
+    wifi_settings_remote_set_handler(ID_READ_HANDLER,
+            wifi_settings_read_handler, NULL);
+    wifi_settings_remote_set_handler(ID_WRITE_FLASH_HANDLER,
+            wifi_settings_write_flash_handler, NULL);
+    wifi_settings_remote_set_two_stage_handler(
+            ID_OTA_FIRMWARE_UPDATE_HANDLER,
+            wifi_settings_ota_firmware_update_handler1,
+            wifi_settings_ota_firmware_update_handler2, NULL);
+    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings remote memory access"));
+#endif
+
+    // Start TCP service
+    struct tcp_pcb* port_pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+    if (!port_pcb) {
+        panic("wifi_settings_remote_init(): tcp_new_ip_type failed\n");
+        pico_err = PICO_ERROR_INSUFFICIENT_RESOURCES;
+        goto end;
+    }
+
+    err_t lwip_err = tcp_bind(port_pcb, NULL, PORT_NUMBER);
+    if (lwip_err) {
+        panic("wifi_settings_remote_init(): tcp_bind failed\n");
+        pico_err = PICO_ERROR_RESOURCE_IN_USE;
+        goto end;
+    }
+
+    g_remote_service_pcb = tcp_listen_with_backlog(port_pcb, 1);
+    if (!g_remote_service_pcb) {
+        panic("wifi_settings_remote_init(): tcp_listen_with_backlog failed\n");
+        pico_err = PICO_ERROR_INSUFFICIENT_RESOURCES;
+        goto end;
+    }
+    tcp_accept(g_remote_service_pcb, server_accept);
+
+    // Start UDP service (responder)
+    g_responder_service_pcb = udp_new_ip_type(IPADDR_TYPE_ANY);
+    if (!g_responder_service_pcb) {
+        panic("wifi_settings_remote_init(): udp_new_ip_type failed\n");
+        pico_err = PICO_ERROR_INSUFFICIENT_RESOURCES;
+        goto end;
+    }
+    lwip_err = udp_bind(g_responder_service_pcb, NULL, PORT_NUMBER);
+    if (lwip_err) {
+        panic("wifi_settings_remote_init(): udp_bind failed\n");
+        pico_err = PICO_ERROR_INSUFFICIENT_RESOURCES;
+        goto end;
+    }
+    udp_recv(g_responder_service_pcb, responder_recv, NULL);
+
+    pico_err = PICO_ERROR_NONE; 
+end:
+    cyw43_arch_lwip_end();
+    return pico_err;
+}
 
 def __hmac_sha256(key: bytes, msg: bytes) -> bytes:
     """Internal. Compute HMAC-SHA256. This can be done using the hmac module
@@ -104,6 +894,10 @@ def __get_pad_bytes(data_size: int, block_size: int, pad_byte = b"\x00") -> byte
         return b""
     pad = block_size - last_block_size
     return pad_byte * pad
+
+
+
+
 
 class RemoteError(Exception):
     """Base for all errors relating to issues with the remote system."""
