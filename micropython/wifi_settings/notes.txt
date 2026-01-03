@@ -136,7 +136,9 @@ normally a feature of the socket module...
 
 The secret is to call lwip_socket_setsockopt with args[2] = 20 and args[3] = a callback function
 
-
+Using socket.socket with the callback registration it is even possible to bind the
+socket to "" before an IP address is obtained, indeed before even the wifi connection is available,
+and this will still work!
    
 
 

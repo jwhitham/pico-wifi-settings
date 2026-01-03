@@ -24,23 +24,23 @@ def listen_callback(s: socket.socket) -> None:
     s2.setblocking(False)
 
 def main() -> None:
+
+    #ip = wifi_settings.get_ip()
+    #while not ip:
+        #print("Await IP address")
+        #time.sleep(1)
+        #ip = wifi_settings.get_ip()
+
+    port = 2000
+    print("Server", port)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('', port))
+    __set_micropython_lwip_callback(s, listen_callback)
+    s.listen(1)
     print("Init")
     wifi_settings.init()
     print("Connect")
     wifi_settings.connect()
-
-    ip = wifi_settings.get_ip()
-    while not ip:
-        print("Await IP address")
-        time.sleep(1)
-        ip = wifi_settings.get_ip()
-
-    port = 2000
-    print("Server", ip, port)
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((ip, port))
-    __set_micropython_lwip_callback(s, listen_callback)
-    s.listen(1)
     print("OK")
 
 if __name__ == "__main__":
