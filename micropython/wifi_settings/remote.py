@@ -718,10 +718,10 @@ def set_two_stage_handler(
 
     g_handler_table[handler_id] = HandlerCallbackArg(callback1, callback2, arg)
 
-def remote_update_secret() -> None:
+def update_secret() -> None:
     """Re-read the wifi_settings file in Flash to obtain update_secret,
     this should be called if the secret is updated in memory so that the new
-    value is used. (Note, this is called by remote_init).
+    value is used. (Note, this is called by init()).
     """
     global g_secret_valid, g_hmac_padded_key_1, g_hmac_padded_key_2
     g_secret_valid = False
@@ -743,41 +743,20 @@ def remote_update_secret() -> None:
             + bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
     g_secret_valid = True
 
-# EDIT HORIZON
+def init() -> None:
+    # Load secret
+    update_secret()
 
-int wifi_settings_remote_init() {
-    int pico_err = PICO_ERROR_NONE; 
-
-    // We will be calling LWIP functions, so the lock is needed
-    cyw43_arch_lwip_begin();
-    if (g_remote_service_pcb) {
-        goto end;
-    }
-
-    // Load secret
-    wifi_settings_remote_update_secret();
-
-    // Install handlers for messages
-    wifi_settings_remote_set_handler(ID_PICO_INFO_HANDLER,
-            wifi_settings_pico_info_handler, NULL);
-    wifi_settings_remote_set_handler(ID_UPDATE_HANDLER,
-            wifi_settings_update_handler, NULL);
+    # Install basic handlers for messages
+    set_handler(ID_PICO_INFO_HANDLER, remote_handlers.pico_info_handler, None)
+    set_handler(ID_UPDATE_HANDLER, remote_handlers.update_handler, None)
     wifi_settings_remote_set_two_stage_handler(
             ID_UPDATE_REBOOT_HANDLER,
-            wifi_settings_update_reboot_handler1,
-            wifi_settings_update_reboot_handler2, NULL);
-    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings remote file updates"));
-#ifdef ENABLE_REMOTE_MEMORY_ACCESS
-    wifi_settings_remote_set_handler(ID_READ_HANDLER,
-            wifi_settings_read_handler, NULL);
-    wifi_settings_remote_set_handler(ID_WRITE_FLASH_HANDLER,
-            wifi_settings_write_flash_handler, NULL);
-    wifi_settings_remote_set_two_stage_handler(
-            ID_OTA_FIRMWARE_UPDATE_HANDLER,
-            wifi_settings_ota_firmware_update_handler1,
-            wifi_settings_ota_firmware_update_handler2, NULL);
-    bi_decl_if_func_used(bi_program_feature("pico-wifi-settings remote memory access"));
-#endif
+            remote_handlers.update_reboot_handler1,
+            remote_handlers.update_reboot_handler2, None)
+
+# EDIT HORIZON
+    listen_sock =
 
     // Start TCP service
     struct tcp_pcb* port_pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
