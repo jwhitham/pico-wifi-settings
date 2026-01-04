@@ -131,7 +131,15 @@ class HandlerCallbackArg:
     callback2: HandlerCallback2
     arg: typing.Any
 
-g_handler_table: typing.List[HandlerCallbackArg] = [HandlerCallbackArg() for _ in range(NUM_HANDLERS)]
+    def __init__(self, 
+            callback1: HandlerCallback1,
+            callback2: HandlerCallback2,
+            arg: typing.Any) -> None:
+        self.callback1 = callback1
+        self.callback2 = callback2
+        self.arg = arg
+
+g_handler_table: typing.Dict[int, HandlerCallbackArg] = {}
 g_hmac_padded_key_1: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_hmac_padded_key_2: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_secret_valid: bool = False
@@ -326,10 +334,8 @@ class Session:
         handler_id = msg_type - ID_FIRST_HANDLER
 
         # Check handler is valid (this was already checked, but g_handler_table may have changed)
-        if ((handler_id >= NUM_HANDLERS)
-        or (handler_id < 0)
-        or not (g_handler_table[handler_id].callback1
-                or g_handler_table[handler_id].callback2)):
+        if not ((handler_id in g_handler_table)
+        and (g_handler_table[handler_id].callback1 or g_handler_table[handler_id].callback2)):
             self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
             return
 
@@ -381,10 +387,8 @@ class Session:
         # Check handler ID is within the allowed range
         (data_size, parameter, msg_type, _) = __unpack_header(self.request_header)
         handler_id = msg_type - ID_FIRST_HANDLER
-        if ((handler_id >= NUM_HANDLERS)
-        or (handler_id < 0)
-        or not (g_handler_table[handler_id].callback1
-                or g_handler_table[handler_id].callback2)) {
+        if not ((handler_id in g_handler_table)
+        and (g_handler_table[handler_id].callback1 or g_handler_table[handler_id].callback2)):
             self.state = SEND_BAD_HANDLER_ERROR
             return
 
@@ -419,7 +423,7 @@ class Session:
             # Second message, client to server. Client sends the client challenge.
             if self.input_block[0] != ID_REQUEST:
                 self.state = ReceiveState.SEND_BAD_MSG_ERROR
-            elif not g_secret_valid: {
+            elif not g_secret_valid:
                 self.state = ReceiveState.SEND_NO_SECRET_ERROR
             else:
                 self.client_challenge = self.input_block[1:AES_BLOCK_SIZE]
@@ -579,8 +583,7 @@ class Session:
             (_, result, msg_type, _) = __unpack_header(self.request_header)
             handler_id = msg_type - ID_FIRST_HANDLER
 
-            if ((handler_id < NUM_HANDLERS)
-            and (handler_id >= 0)
+            if ((handler_id in g_handler_table)
             and g_handler_table[handler_id].callback2):
                 g_handler_table[handler_id].callback2(
                     msg_type,
@@ -646,60 +649,101 @@ def __responder_recv(udp_sock: socket.socket) -> None:
     except Exception:
         return
 
+def set_handler(
+        msg_type: int,
+        callback1: HandlerCallback1,
+        arg: typing.Any) -> None:
+    """Register a stage 1 callback function to handle remote messages of the specified type.
+
+    The handler is called when a request is received with a msg_type previously registered with
+    wifi_settings_remote_set_handler.
+
+    The user sends a (network) message containing a msg_type, some data (perhaps 0 bytes)
+    and a parameter (int32_t) - all of these are received, decrypted (AES-256),
+    and integrity checked (SHA-256) before the handler is invoked with
+    (msg_type, request_data_buffer, input_parameter, arg) parameters, where
+        msg_type is the first parameter of set_handler
+        request_data_buffer is a bytes() buffer of size 0 to MAX_DATA_SIZE inclusive
+            containing data received from the client (e.g. remote_picotool)
+        input_parameter is a 32-bit signed integer value received from the client
+        arg is the third parameter of set_handler
+
+    The callback function should return a tuple:
+        (reply_data_buffer, return_value)
+    where
+        reply_data_buffer is a bytes() buffer of size 0 to MAX_DATA_SIZE inclusive
+            containing data to be sent to the client
+        return_value is a 32-bit signed integer value to be sent to the client
+
+    msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER ..
+    ID_LAST_USER_HANDLER inclusive.
+    """
+    set_two_stage_handler(msg_type, callback1, None, arg)
+
+
+def set_two_stage_handler(
+        msg_type: int,
+        callback1: HandlerCallback1,
+        callback2: HandlerCallback2,
+        arg: typing.Any) -> None:
+    """Register stage 1 and stage2 callback functions to handle remote messages of the specified type.
+
+    See set_handler for a description of callback1.
+    
+    After callback1 returns, the return value from callback1 is sent to the
+    client but no data is sent. The connection is then closed, and callback2
+    is called with the following parameters:
+        (msg_type, reply_data_buffer, return_value, arg)
+    where
+        msg_type is the first parameter of set_two_stage_handler
+        reply_data_buffer is the first tuple element returned by callback1
+        return_value is the second tuple element returned by callback1
+            (this value has also been sent to the client)
+        arg is the fourth parameter of set_two_stage_handler
+
+    This second handler cannot return a value or any data. The purpose of two-part
+    handlers is to support requests that put the Pico offline (e.g. reboot) as these
+    have to be acknowledged before they are executed. Usually the first part will be
+    used for validation, returning a non-zero value if validation fails, and then the second
+    part will check the return_value from the first, and proceed
+    only if validation was ok.
+
+    msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER ..
+    ID_LAST_USER_HANDLER inclusive.
+    """
+    handler_id = msg_type - ID_FIRST_HANDLER
+
+    if ((handler_id >= NUM_HANDLERS) or (handler_id < 0)):
+        raise IndexError(handler_id)
+
+    g_handler_table[handler_id] = HandlerCallbackArg(callback1, callback2, arg)
+
+def remote_update_secret() -> None:
+    """Re-read the wifi_settings file in Flash to obtain update_secret,
+    this should be called if the secret is updated in memory so that the new
+    value is used. (Note, this is called by remote_init).
+    """
+    global g_secret_valid, g_hmac_padded_key_1, g_hmac_padded_key_2
+    g_secret_valid = False
+
+    update_secret = storage.get_value_for_key("update_secret")
+    if not update_secret:
+        return
+
+    secret_hashed = b"\x00" * HMAC_DIGEST_SIZE
+    for _ in range(4096):
+        h1 = hashlib.sha256()
+        h1.update(secret_hashed)
+        h1.update(update_secret.encode())
+        secret_hashed = h1.digest()
+
+    g_hmac_padded_key_1 = (bytes([k ^ 0x36 for k in secret_hashed])
+            + bytes([0x36 for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
+    g_hmac_padded_key_2 = (bytes([k ^ 0x5c for k in secret_hashed])
+            + bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
+    g_secret_valid = True
+
 # EDIT HORIZON
-
-int wifi_settings_remote_set_two_stage_handler(
-        uint8_t msg_type,
-        handler_callback1_t callback1,
-        handler_callback2_t callback2,
-        void* arg) {
-    uint8_t handler_id = msg_type - ID_FIRST_HANDLER;
-    if (handler_id >= NUM_HANDLERS) {
-        return PICO_ERROR_INVALID_ARG;
-    }
-    g_handler_table[(uint) handler_id].callback1 = callback1;
-    g_handler_table[(uint) handler_id].callback2 = callback2;
-    g_handler_table[(uint) handler_id].arg = arg;
-    return PICO_ERROR_NONE;
-}
-
-int wifi_settings_remote_set_handler(
-        uint8_t msg_type,
-        handler_callback1_t callback,
-        void* arg) {
-    return wifi_settings_remote_set_two_stage_handler(msg_type, callback, NULL, arg);
-}
-
-void wifi_settings_remote_update_secret() {
-    g_secret_valid = false;
-    memset(secret_hashed, 0, HMAC_DIGEST_SIZE);
-
-    uint8_t update_secret[128];
-    uint update_secret_size = sizeof(update_secret);
-
-    if (wifi_settings_get_value_for_key(
-            "update_secret", (char*) update_secret, &update_secret_size)
-    && (update_secret_size > 0)) {
-        mbedtls_sha256_context ctx;
-        mbedtls_sha256_init(&ctx);
-        for (uint i = 0; i < 4096; i++) {
-            if ((0 != mbedtls_sha256_starts(&ctx, 0))
-            || (0 != mbedtls_sha256_update(&ctx, secret_hashed, HMAC_DIGEST_SIZE))
-            || (0 != mbedtls_sha256_update(&ctx, update_secret, update_secret_size))
-            || (0 != mbedtls_sha256_finish(&ctx, secret_hashed))) {
-                panic("update_secret sha256 failed");
-            }
-        }
-        mbedtls_sha256_free(&ctx);
-        g_hmac_padded_key_1 = (bytes([k ^ 0x36 for k in secret_hashed])
-                + bytes([0x36 for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
-        g_hmac_padded_key_2 = (bytes([k ^ 0x5c for k in secret_hashed])
-                + bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
-        g_secret_valid = true;
-    }
-
-
-}
 
 int wifi_settings_remote_init() {
     int pico_err = PICO_ERROR_NONE; 
