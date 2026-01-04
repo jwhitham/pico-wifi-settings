@@ -18,6 +18,8 @@ from asyncio import StreamReader, StreamWriter
 from pathlib import Path
 from abc import abstractmethod
 
+from .hostname import BOARD_ID
+
 # Type-checking
 try:
     import typing
@@ -25,9 +27,10 @@ except ImportError:
     pass
 
 PORT_NUMBER =               1404
-RESPONDER_REQUEST_MAGIC =  b"PWS?"
-RESPONDER_REPLY_MAGIC =    b"PWS:"
+RESPONDER_REQUEST_MAGIC =   "PWS?"
+RESPONDER_REPLY_MAGIC =     "PWS:"
 BOARD_ID_SIZE =             8 
+RESPONDER_MAX_SIZE =        20
 
 CHALLENGE_SIZE =            15
 AUTHENTICATION_SIZE =       15
@@ -133,24 +136,45 @@ g_hmac_padded_key_1: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_hmac_padded_key_2: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_secret_valid: bool = False
 
+def __make_greeting() -> None:
+    """Internal. Create a greeting string to be sent over the network to a client."""
+
+    # generate text
+    data = "xxx\r{}\rmicropython pico-wifi-settings version {}\r\n".format(
+        BOARD_ID,
+        configuration.WIFI_SETTINGS_VERSION_STRING).encode()
+    # pad to block size
+    data += (b"\x00" * (AES_BLOCK_SIZE - (len(data) % AES_BLOCK_SIZE)))
+
+    # bytes 0 .. 2 are fixed fields in the reply
+    # bytes 4 .. 19 contain the board ID in uppercase hex format
+    # bytes 20 .. <unspecified> contain UTF-8 text that can be printed
+    # Replace bytes 0 - 2
+    data = bytes([ID_GREETING, PROTOCOL_VERSION, len(data) // AES_BLOCK_SIZE]) + data[3:]
+    return data
+
+GREETING_BYTES = __make_greeting()
+
 class Session:
     data: bytes = b"" # MAX_DATA_SIZE
     client_challenge: bytes = b"" # CHALLENGE_SIZE
     server_challenge: bytes = b"" # CHALLENGE_SIZE
     output_block: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    output_block_ready: bool = False
     input_block: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    input_block_offset: int = 0
     decrypt: cryptolib.aes
     encrypt: cryptolib.aes
     reply_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
     request_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    state: ReceiveState = ReceiveState.ID_GREETING
+    state: ReceiveState = ReceiveState.SEND_GREETING
     data_index: int = 0
 
+    def __init__(self) -> None:
+        """Set up a greeting."""
+        self.data = GREETING_BYTES
+        self.state = ReceiveState.SEND_GREETING
 
-    def __generate_authentication(self, append_code: bytes) -> bytes:
-        """Internal. Compute HMAC-SHA256. This can be done using the hmac module
+    def generate_authentication(self, append_code: bytes) -> bytes:
+        """Compute HMAC-SHA256. This can be done using the hmac module
         with Python 3 but this is not available on Micropython."""
         # first SHA256 start
         h1 = hashlib.sha256()
@@ -171,17 +195,17 @@ class Session:
         d2 = h2.digest()
         return d2
 
-    def __generate_keys(self) -> None:
-        """Internal. Generate encryption and decryption keys
+    def generate_keys(self) -> None:
+        """Generate encryption and decryption keys
         and Micropython cryptolib objects."""
-        raw_key = self.__generate_authentication("SK")
+        raw_key = self.generate_authentication("SK")
         self.encrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
 
-        raw_key = self.__generate_authentication("CK")
+        raw_key = self.generate_authentication("CK")
         self.decrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
 
-    def __generate_enc_data_hash(self, header: bytes) -> bytes:
-        """Internal. Generate and return a hash for the reply header and payload (if any).
+    def generate_enc_data_hash(self, header: bytes) -> bytes:
+        """Generate and return a hash for the reply header and payload (if any).
 
         The first part of the header is hashed, ignoring the data hash bytes at the end.
         All payload data is hashed.
@@ -192,26 +216,26 @@ class Session:
         h1.update(self.data)    # Note: data size expected to match header.data_size
         return h1.digest()[:DATA_HASH_SIZE]
 
-    def __generate_enc_header_for_error(self, msg_type: int) -> None:
-        """Internal. Generate an encrypted reply header containing the error msg_type.
+    def generate_enc_header_for_error(self, msg_type: int) -> None:
+        """Generate an encrypted reply header containing the error msg_type.
         The result is stored in self.reply_header (clear) and self.output_block (encrypted)."""
 
         # Only the msg_type and data_hash fields are used - everything else is 0
-        self.reply_header = self.__pack_header(0, 0, msg_type, self.__generate_enc_data_hash(
-                                self.__pack_header(0, 0, msg_type)))
+        self.reply_header = self.pack_header(0, 0, msg_type, self.generate_enc_data_hash(
+                                self.pack_header(0, 0, msg_type)))
 
         # Encrypt
         self.output_block = self.encrypt.encrypt(self.reply_header)
         self.state = ReceiveState.DISCONNECT
 
-    def __generate_clear_header_for_error(self, msg_type: int) -> None:
-        """Internal. Generate an unencrypted reply header containing the error msg_type.
+    def generate_clear_header_for_error(self, msg_type: int) -> None:
+        """Generate an unencrypted reply header containing the error msg_type.
         The result is stored in self.output_block."""
         self.output_block = bytes([msg_type]) + ZERO_BLOCK[1:]
         self.state = ReceiveState.DISCONNECT
 
-    def __generate_output_block(self) -> bool:
-        """Internal. Generate an appropriate output for the current state
+    def generate_output_block(self) -> None:
+        """Generate an appropriate output for the current state
         and store it in self.output_block."""
         if self.state == ReceiveState.SEND_GREETING:
             # First message, server to client. Say hello.
@@ -220,56 +244,47 @@ class Session:
             self.data_index += AES_BLOCK_SIZE
             if self.data_index >= self.reply_header.data_size:
                 self.state = ReceiveState.EXPECT_REQUEST
-            return True
         elif self.state == ReceiveState.EXPECT_REQUEST:
             # Second message, client to server. Client sends the client challenge.
-            return False
+            pass
         elif self.state == ReceiveState.SEND_CHALLENGE:
             # Third message, server to client. Server sends the server challenge.
             self.output_block = bytes([ID_CHALLENGE]) + os.urandom(CHALLENGE_SIZE)
             self.state = ReceiveState.EXPECT_AUTHENTICATION
-            return True
         elif self.state == ReceiveState.EXPECT_AUTHENTICATION:
             # Fourth message, client to server. Client sends the client authentication.
-            return False
+            pass
         elif self.state == ReceiveState.SEND_AUTHENTICATION:
             # Fifth message, server to client. Server sends the server authentication.
-            self.output_block = bytes([ID_RESPONSE]) + self.__generate_authentication("SA")
+            self.output_block = bytes([ID_RESPONSE]) + self.generate_authentication("SA")
             self.state = ReceiveState.EXPECT_ACKNOWLEDGE
-            return True
         elif self.state == ReceiveState.EXPECT_ACKNOWLEDGE:
             # Sixth message, client to server. Client indicates authentication is complete.
-            return False
+            pass
         elif self.state == ReceiveState.SEND_BAD_MSG_ERROR:
             # Report bad message error to the client.
-            self.__generate_clear_header_for_error(ID_BAD_MSG_ERROR)
-            return True
+            self.generate_clear_header_for_error(ID_BAD_MSG_ERROR)
         elif self.state == ReceiveState.SEND_AUTH_ERROR:
             # Report authentication error to the client.
-            self.__generate_clear_header_for_error(ID_AUTH_ERROR)
-            return True
+            self.generate_clear_header_for_error(ID_AUTH_ERROR)
         elif self.state == ReceiveState.SEND_NO_SECRET_ERROR:
             # Report 'no secret' error to the client.
-            self.__generate_clear_header_for_error(ID_NO_SECRET_ERROR)
-            return True
+            self.generate_clear_header_for_error(ID_NO_SECRET_ERROR)
         elif self.state == ReceiveState.SEND_CORRUPT_ERROR:
             # Encrypted stage. Report corrupt encrypted data error to the client.
-            self.__generate_enc_header_for_error(ID_CORRUPT_ERROR)
-            return True
+            self.generate_enc_header_for_error(ID_CORRUPT_ERROR)
         elif self.state == ReceiveState.SEND_BAD_PARAM_ERROR:
             # Encrypted stage. Report bad parameter error to the client.
-            self.__generate_enc_header_for_error(ID_BAD_PARAM_ERROR)
-            return True
+            self.generate_enc_header_for_error(ID_BAD_PARAM_ERROR)
         elif self.state == ReceiveState.SEND_BAD_HANDLER_ERROR:
             # Encrypted stage. Report bad handler error to the client.
-            self.__generate_enc_header_for_error(ID_BAD_HANDLER_ERROR)
-            return True
+            self.generate_enc_header_for_error(ID_BAD_HANDLER_ERROR)
         elif self.state == ReceiveState.EXPECT_ENC_REQUEST_HEADER:
             # Encrypted stage. Awaiting request from the client.
-            return False
+            pass
         elif self.state == ReceiveState.EXPECT_ENC_REQUEST_PAYLOAD:
             # Encrypted stage. Awaiting payload from the client.
-            return False
+            pass
         elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER:
             # Encrypted stage. Send reply header to the client.
             self.output_block = self.encrypt.encrypt(self.reply_header)
@@ -277,7 +292,6 @@ class Session:
                 # Header only - no payload
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
             else:
-                self.state = ReceiveState.SEND_ENC_REPLY_PAYLOAD
             return True
         elif self.state == ReceiveState.SEND_ENC_REPLY_PAYLOAD:
             # Encrypted stage. Send payload data to the client.
@@ -287,25 +301,22 @@ class Session:
             if self.data_index >= len(self.data):
                 # Finished
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
-            return True
         elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2:
             # Encrypted stage. Send reply header to the client (callback2 pending).
             self.output_block = self.encrypt.encrypt(self.reply_header)
             self.state = ReceiveState.EXECUTE_CALLBACK2
-            return True
         elif self.state == ReceiveState.EXECUTE_CALLBACK2:
             # Execute callback2 handler when header has been sent (nothing should be sent).
-            return False
+            pass
         elif self.state == ReceiveState.DISCONNECT:
-            return False
-        return False
+            pass
 
-    def __handle_enc_request_end(self) -> None:
-        """Internal. Process the end of an encrypted request,
+    def handle_enc_request_end(self) -> None:
+        """Process the end of an encrypted request,
         i.e. verify integrity, call a handler, prepare to send reply data."""
 
         # Check data hash is correct
-        expect_hash = self.__generate_enc_data_hash(self.request_header)
+        expect_hash = self.generate_enc_data_hash(self.request_header)
         if expect_hash != self.request_header[ENC_HEADER_DATA_HASH_OFFSET:]:
             self.state = ReceiveState.SEND_CORRUPT_ERROR
             return
@@ -358,14 +369,14 @@ class Session:
             reply_data_size = len(self.data)
 
         # Generate reply header
-        self.reply_header = self.__pack_header(reply_data_size, result, ID_OK,
-            self.__generate_enc_data_hash(self.__pack_header(reply_data_size, result, ID_OK)))
+        self.reply_header = self.pack_header(reply_data_size, result, ID_OK,
+            self.generate_enc_data_hash(self.pack_header(reply_data_size, result, ID_OK)))
 
-    def __handle_enc_request_start(self) -> None:
-        """Internal. Process the start of an encrypted request,
+    def handle_enc_request_start(self) -> None:
+        """Process the start of an encrypted request,
         i.e. check the header and start the input data transfer."""
         # Decrypt 
-        self.request_header = self.decrypt.decrypt(self.input_block)
+        self.request_header = self.decrypt.decrypt(self.input_block[:AES_BLOCK_SIZE])
 
         # Check handler ID is within the allowed range
         (data_size, parameter, msg_type, _) = __unpack_header(self.request_header)
@@ -386,21 +397,21 @@ class Session:
         self.data = b""
         if data_size == 0:
             # There is no payload - go direct to the end
-            self.__handle_enc_request_end()
+            self.handle_enc_request_end()
         else:
             # Payload needed
             self.state = ReceiveState.EXPECT_ENC_REQUEST_PAYLOAD
 
-    def __handle_enc_request_add_data(self) -> None:
-        """Internal. Process data input for an encrypted request."""
-        self.data += self.decrypt.decrypt(self.input_block)
+    def handle_enc_request_add_data(self) -> None:
+        """Process data input for an encrypted request."""
+        self.data += self.decrypt.decrypt(self.input_block[:AES_BLOCK_SIZE])
         (data_size, _, _, _) = __unpack_header(self.request_header)
         if len(self.data) >= data_size:
             # No more blocks
-            self.__handle_enc_request_end()
+            self.handle_enc_request_end()
 
-    def __handle_input_block(self) -> bool:
-        """Internal. Handle the input appropriately for the current state."""
+    def handle_input_block(self) -> bool:
+        """Handle the input appropriately for the current state."""
         if self.state == ReceiveState.SEND_GREETING:
             # First message, server to client. Say hello.
             return False
@@ -411,7 +422,7 @@ class Session:
             elif not g_secret_valid: {
                 self.state = ReceiveState.SEND_NO_SECRET_ERROR
             else:
-                self.client_challenge = self.input_block[1:]
+                self.client_challenge = self.input_block[1:AES_BLOCK_SIZE]
                 self.state = ReceiveState.SEND_CHALLENGE
             }
             return True
@@ -423,7 +434,7 @@ class Session:
             if block[0] != ID_AUTHENTICATION:
                 self.state = ReceiveState.SEND_BAD_MSG_ERROR
             else:
-                check_authentication = self.__generate_authentication("CA")
+                check_authentication = self.generate_authentication("CA")
                 if check_authentication != block[1:]:
                     self.state = ReceiveState.SEND_AUTH_ERROR
                 else:
@@ -439,7 +450,7 @@ class Session:
             else:
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
                 # Session keys can be generated now
-                self.__generate_keys()
+                self.generate_keys()
             return True
         elif self.state == ReceiveState.SEND_BAD_MSG_ERROR:
             # Report bad message error to the client.
@@ -461,14 +472,14 @@ class Session:
             return False
         elif self.state == ReceiveState.EXPECT_ENC_REQUEST_HEADER:
             # Encrypted stage. Awaiting request from the client.
-            self.__handle_enc_request_start()
+            self.handle_enc_request_start()
             return True
         elif self.state == ReceiveState.EXECUTE_CALLBACK2:
             # Execute callback2 handler when header has been sent (nothing should be received).
             return False
         elif self.state == ReceiveState.EXPECT_ENC_REQUEST_PAYLOAD:
             # Encrypted stage. Awaiting payload data from the client.
-            self.__handle_enc_request_add_data()
+            self.handle_enc_request_add_data()
             return True
         elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER:
             # Encrypted stage. Send reply header to the client.
@@ -483,253 +494,159 @@ class Session:
             return False
         return False
 
+    def send_while_able(self, sock: socket.socket) -> None:
+        """Send as many output blocks as possible now. This is limited by LwIP's
+        buffers as well as the receiving side."""
+        while True:
+            # check if an output block is waiting to be sent
+            if len(self.output_block) == 0:
+                # try to generate an output block
+                self.generate_output_block()
+                if len(self.output_block) == 0:
+                    # There is nothing to send
+                    return
+
+            # try to send a block - we can't tell if this will succeed beforehand
+            try:
+                size = sock.write(self.output_block)
+            except Exception:
+                # failure, some unhandlable error - abandon the connection
+                self.state = ReceiveState.DISCONNECT
+                return
+
+            if size != len(self.output_block):
+                # failure, block is not completely sent, we
+                # should try again later, after some data has been sent
+                self.output_block = self.output_block[size:]
+                return
+
+            # success, block has been sent - generate another if possible
+            self.output_block = b""
+
+    def server_socket_callback(self, sock: socket.socket) -> None:
+        """Receive and send as many blocks as possible."""
+
+        input_buffer_overflow = False
+        try:
+            self.input_block += sock.recv(AES_BLOCK_SIZE * 100)
+        except Exception:
+            # failure, some unhandlable error - abandon the connection
+            self.state = ReceiveState.DISCONNECT
+            self.input_block = b""
+
+        while len(self.input_block) >= AES_BLOCK_SIZE:
+            # Process the block
+            if not self.handle_input_block():
+                # Unable to handle input right now!
+                # (There is no buffer space for this.)
+                # We will disconnect, possibly after sending an error message
+                input_buffer_overflow = True
+                break
+            self.input_block = self.input_block[AES_BLOCK_SIZE:]
+
+        # disconnect before sending anything if requested by __handle_input_block
+        if self.state == ReceiveState.DISCONNECT:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            return
+
+        # Send data (if any)
+        # send_while_able may also enter the DISCONNECT state
+        self.send_while_able(sock)
+
+        # disconnect after sending anything if requested by __send_while_able
+        # or if there was an overflow while receiving
+        if (self.state == ReceiveState.DISCONNECT) or input_buffer_overflow:
+            self.state = ReceiveState.DISCONNECT
+            try:
+                sock.close()
+            except Exception:
+                pass
+            return
+
+        # Special case for executing a callback after closing the connection
+        if self.state == ReceiveState.EXECUTE_CALLBACK2:
+            # Data has been sent, execute callback2 if it exists (close first)
+            self.state = ReceiveState.DISCONNECT
+            try:
+                sock.close()
+            except Exception:
+                return
+
+            # Load the result from running callback1
+            (_, result, msg_type, _) = __unpack_header(self.request_header)
+            handler_id = msg_type - ID_FIRST_HANDLER
+
+            if ((handler_id < NUM_HANDLERS)
+            and (handler_id >= 0)
+            and g_handler_table[handler_id].callback2):
+                g_handler_table[handler_id].callback2(
+                    msg_type,
+                    self.data,
+                    result,
+                    g_handler_table[handler_id].arg)
+
+            # Result of executing callback2 cannot be reported
+
+def __set_micropython_lwip_callback(sock, callback):
+    """Internal: register a function which will be called whenever
+    tcp_recv or tcp_accept is called for the provided socket.
+
+    mypy should ignore this function as setsockopt does not match the usual
+    CPython library definition.
+
+    The magic number 20 is from Micropython extmod/modlwip.c."""
+    return sock.setsockopt(0, 20, callback)
+
+def __server_accept(listen_sock: socket.socket) -> None:
+    """Internal. A callback for a new connection (on the listening socket).
+
+    A Session object is created for the new connection."""
+
+    try:
+        client_sock = listen_sock.accept()
+    except Exception:
+        return
+
+    session = Session()
+    __set_micropython_lwip_callback(client_sock, session.server_socket_callback)
+    session.send_while_able()
+
+def __responder_recv(udp_sock: socket.socket) -> None:
+    """Internal. This callback is called when a UDP packet is received on the responder socket."""
+
+    try:
+        (packet, addr) = udp_sock.recvfrom(RESPONDER_MAX_SIZE)
+    except Exception:
+        return
+
+    try:
+        text = packet.decode()
+    except Exception:
+        # Not well-formed UTF-8
+        return
+
+    # Check magic
+    if not text.startswith(RESPONDER_REQUEST_MAGIC):
+        # Invalid request - not magic
+        return
+
+    # Check board ID
+    if not text[4:].startswith(BOARD_ID):
+        # Request is for a different board
+        return
+
+    # Respond to request with complete board id
+    text = RESPONDER_REPLY_MAGIC + BOARD_ID
+    packet = text.encode()
+    try:
+        sock.sendto(packet, addr)
+    except Exception:
+        return
+
 # EDIT HORIZON
-static void server_tcp_close(struct tcp_pcb *client_pcb) {
-    // Disable all callbacks
-    tcp_arg(client_pcb, NULL);
-    tcp_sent(client_pcb, NULL);
-    tcp_recv(client_pcb, NULL);
-    tcp_err(client_pcb, NULL);
-    // close
-    tcp_close(client_pcb);
-}
-
-static void server_err(void *arg, err_t unused) {
-    // Called if there is a TCP error with the connection or from the remote side.
-    // This callback:
-    // * must free the arg pointer (if not NULL)
-    // * should ignore the err parameter
-    // * might be called with arg == NULL
-    struct session_t* session = (struct session_t*) arg;
-    free(session);
-}
-
-static void send_while_able(struct session_t* session, struct tcp_pcb* client_pcb) {
-    while (true) {
-        // check if an output block is waiting to be sent
-        if (!self.output_block_ready) {
-            // try to generate an output block
-            if (!generate_output_block(session)) {
-                // There's nothing to send
-                return;
-            }
-            self.output_block_ready = true;
-        }
-
-        // try to send a block
-        // Note: can't use tcp_sndbuf to tell if this will succeed, so we have
-        // to generate a block beforehand.
-        err_t err = tcp_write(client_pcb, self.output_block,
-                        AES_BLOCK_SIZE, TCP_WRITE_FLAG_COPY);
-        if (err == ERR_OK) {
-            // success, block has been sent
-            self.output_block_ready = false;
-        } else if (err == ERR_MEM) {
-            // failure, we should try again later, after some data has been sent
-            return;
-        } else {
-            // some other error - abandon the connection
-            self.state = DISCONNECT;
-            return;
-        }
-    }
-}
-
-static err_t server_recv(void* arg, struct tcp_pcb* client_pcb, struct pbuf* p, err_t err) {
-    // Called when a packet is received or when the connection is closed by the other side
-    //
-    // The lwip documentation isn't clear about the expected behaviour for the tcp_recv callback,
-    // but based on looking at lwip examples such as netio.c, tcpecho_raw.c, smtp.c, httpd.c,
-    // the tcp_recv callback:
-    // * must free the pbuf (p) if p != NULL
-    // * must call tcp_recved to indicate how many bytes were received
-    // * may call tcp_close
-    // * can ignore the err parameter
-    // * must return either ERR_OK or ERR_ABRT
-    //   * even if called with err != ERR_OK - lwip examples generally just ignore this
-    //   * if returning ERR_ABRT, there are special requirements:
-    //     it must first call tcp_abort and free any session data.
-    // * will be called with p == NULL if the remote side closed the connection,
-    //   and in this case it should call tcp_close
-    // * might be called with arg == NULL (in which case tcp_close is correct behaviour)
-    struct session_t* session = (struct session_t*) arg;
-
-    if ((!p) || (!session)) {
-        // connection has been closed by the other side
-        free(session);
-        server_tcp_close(client_pcb);
-        if (p) {
-            pbuf_free(p);
-        }
-        return ERR_OK;
-    }
-
-    // copy in to blocks
-    uint8_t* payload = (uint8_t*) p->payload;
-    uint16_t payload_size = (uint) p->len;
-    bool input_buffer_overflow = false;
-
-    for (uint16_t recv_index = 0; recv_index < payload_size; recv_index++) {
-        self.input_block[(uint) self.input_block_offset] = payload[(uint) recv_index];
-        self.input_block_offset++;
-        if (self.input_block_offset >= AES_BLOCK_SIZE) {
-            // Process the block
-            if (!handle_input_block(session)) {
-                // Unable to handle input right now!
-                // (There is no buffer space for this.)
-                // We will disconnect, possibly after sending an error message
-                input_buffer_overflow = true;
-                break;
-            }
-            self.input_block_offset = 0;
-        }
-    }
-
-    // mark data as received, free pbuf
-    tcp_recved(client_pcb, payload_size);
-    pbuf_free(p);
-
-    // disconnect before sending anything if requested by handle_input_block
-    if (self.state == DISCONNECT) {
-        free(session);
-        server_tcp_close(client_pcb);
-        return ERR_OK;
-    }
-
-    // Send data (if any)
-    // send_while_able may also enter the DISCONNECT state, but in this case,
-    // don't disconnect immediately, wait for server_sent to be called.
-    send_while_able(session, client_pcb);
-
-    // If an overflow was detected, disconnect after sending an error message
-    if (input_buffer_overflow) {
-        self.state = DISCONNECT;
-    }
-    return ERR_OK;
-}
-
-static err_t server_sent(void *arg, struct tcp_pcb *client_pcb, uint16_t unused) {
-    // Called when a packet is sent, and so there is more space is the output buffer,
-    // possibly allowing more data to be sent.
-    //
-    // This callback:
-    // * may call tcp_close
-    // * must return ERR_OK
-    // * might be called with arg == NULL (in which case tcp_close is correct behaviour)
-    struct session_t* session = (struct session_t*) arg;
-
-    if (!session) {
-        server_tcp_close(client_pcb);
-        return ERR_OK;
-    }
-
-    // Send data?
-    send_while_able(session, client_pcb);
-
-    if (self.state == EXECUTE_CALLBACK2) {
-        // Data has been sent, execute callback2 if it exists (close first)
-        server_tcp_close(client_pcb);
-
-        uint8_t handler_id = self.request_header.msg_type - ID_FIRST_HANDLER;
-
-        if ((handler_id < NUM_HANDLERS)
-        && (g_handler_table[(uint) handler_id].callback2)) {
-            g_handler_table[(uint) handler_id].callback2(
-                self.request_header.msg_type,
-                self.data,
-                self.request_header.data_size,
-                self.request_header.parameter_or_result,
-                g_handler_table[(uint) handler_id].arg);
-        }
-        // Result of executing callback2 cannot be reported
-        free(session);
-    } else if (self.state == DISCONNECT) {
-        free(session);
-        server_tcp_close(client_pcb);
-    }
-    return ERR_OK;
-}
-
-static err_t server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
-    // Called for a new connection
-    //
-    // This callback:
-    // * should not call tcp_close
-    // * must return ERR_OK or ERR_VAL or ERR_MEM
-    //   * ERR_MEM if memory couldn't be allocated
-    //   * ERR_VAL if (err != ERR_OK) || !pcb
-    // * must call tcp_sent, tcp_recv, tcp_err to register callbacks
-    // * must call tcp_arg with session data
-    if ((err != ERR_OK) || !client_pcb) {
-        return ERR_VAL; 
-    }
-
-    struct session_t* session = calloc(1, sizeof(struct session_t));
-    if (!session) {
-        return ERR_MEM;
-    }
-
-    tcp_arg(client_pcb, session);
-    tcp_sent(client_pcb, server_sent);
-    tcp_recv(client_pcb, server_recv);
-    tcp_err(client_pcb, server_err);
-
-    // Set up greeting
-    int string_size = snprintf((char*) self.data, MAX_DATA_SIZE,
-        "xxx\r%s\rpico-wifi-settings version " WIFI_SETTINGS_VERSION_STRING "\r\n",
-        wifi_settings_get_board_id_hex());
-    // bytes 0 .. 2 are fixed fields in the reply:
-    self.data[0] = ID_GREETING;
-    self.data[1] = PROTOCOL_VERSION;
-    self.data[2] = (uint8_t) ((string_size + AES_BLOCK_SIZE - 1) / AES_BLOCK_SIZE);
-    // bytes 4 .. 19 contain the board ID in uppercase hex format
-    self.reply_header.data_size = ((uint32_t) self.data[2]) * AES_BLOCK_SIZE;
-    // bytes 20 .. <unspecified> contain UTF-8 text that can be printed
-
-    self.state = SEND_GREETING;
-    send_while_able(session, client_pcb);
-    return ERR_OK;
-}
-
-static void responder_recv(
-        void* unused,
-        struct udp_pcb *pcb,
-        struct pbuf *p,
-        const ip_addr_t *addr,
-        u16_t port) {
-  
-    // Copy the request into a responder_packet_t
-    responder_packet_t mp;
-    memset(&mp, 0, sizeof(mp));
-    if (p->payload) {
-        memcpy(&mp, p->payload, (sizeof(mp) < p->len) ? sizeof(mp) : p->len);
-    }
-    pbuf_free(p); // No longer required
-
-    // Check magic
-    if (memcmp(mp.magic, RESPONDER_REQUEST_MAGIC, sizeof(mp.magic)) != 0) {
-        // Invalid request - not magic
-        return;
-    }
-    // Check board ID
-    mp.board_id_hex[BOARD_ID_SIZE * 2] = '\0';
-    const char* my_board_id_hex = wifi_settings_get_board_id_hex();
-    if (strstr(my_board_id_hex, (const char*) mp.board_id_hex) == NULL) {
-        // Request is for a different board
-        return;
-    }
-    // Respond to request with complete board id
-    memcpy(mp.magic, RESPONDER_REPLY_MAGIC, sizeof(mp.magic));
-    memcpy(mp.board_id_hex, my_board_id_hex, BOARD_ID_SIZE * 2);
-
-    p = pbuf_alloc(PBUF_TRANSPORT, sizeof(responder_packet_t), PBUF_RAM);
-    if (!p) {
-        return;
-    }
-    memcpy(p->payload, &mp, sizeof(responder_packet_t));
-    udp_sendto(pcb, p, addr, port);
-    pbuf_free(p);
-}
 
 int wifi_settings_remote_set_two_stage_handler(
         uint8_t msg_type,
