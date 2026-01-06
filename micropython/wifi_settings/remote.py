@@ -142,8 +142,8 @@ class Session:
     data: bytes = b"" # MAX_DATA_SIZE
     client_challenge: bytes = b"" # CHALLENGE_SIZE
     server_challenge: bytes = b"" # CHALLENGE_SIZE
-    output_block: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    input_block: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
+    output_block: bytes = b"" # AES_BLOCK_SIZE
+    input_block: bytes = b"" # AES_BLOCK_SIZE
     decrypt: cryptolib.aes
     encrypt: cryptolib.aes
     reply_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
@@ -232,14 +232,16 @@ class Session:
             pass
         elif self.state == ReceiveState.SEND_CHALLENGE:
             # Third message, server to client. Server sends the server challenge.
-            self.output_block = bytes([ID_CHALLENGE]) + os.urandom(CHALLENGE_SIZE)
+            self.server_challenge = os.urandom(CHALLENGE_SIZE)
+            self.output_block = bytes([ID_CHALLENGE]) + self.server_challenge
             self.state = ReceiveState.EXPECT_AUTHENTICATION
         elif self.state == ReceiveState.EXPECT_AUTHENTICATION:
             # Fourth message, client to server. Client sends the client authentication.
             pass
         elif self.state == ReceiveState.SEND_AUTHENTICATION:
             # Fifth message, server to client. Server sends the server authentication.
-            self.output_block = bytes([ID_RESPONSE]) + self.generate_authentication(b"SA")
+            self.output_block = (bytes([ID_RESPONSE]) +
+                self.generate_authentication(b"SA")[:CHALLENGE_SIZE])
             self.state = ReceiveState.EXPECT_ACKNOWLEDGE
         elif self.state == ReceiveState.EXPECT_ACKNOWLEDGE:
             # Sixth message, client to server. Client indicates authentication is complete.
@@ -417,7 +419,7 @@ class Session:
             if self.input_block[0] != ID_AUTHENTICATION:
                 self.state = ReceiveState.SEND_BAD_MSG_ERROR
             else:
-                check_authentication = self.generate_authentication(b"CA")
+                check_authentication = self.generate_authentication(b"CA")[:CHALLENGE_SIZE]
                 if check_authentication != self.input_block[1:]:
                     self.state = ReceiveState.SEND_AUTH_ERROR
                 else:
@@ -702,10 +704,11 @@ def update_secret() -> None:
         return
 
     secret_hashed = b"\x00" * HMAC_DIGEST_SIZE
+    secret_bytes = update_secret.encode()
     for _ in range(4096):
         h1 = hashlib.sha256()
         h1.update(secret_hashed)
-        h1.update(update_secret.encode())
+        h1.update(secret_bytes)
         secret_hashed = h1.digest()
 
     g_hmac_padded_key_1 = (bytes([k ^ 0x36 for k in secret_hashed])
