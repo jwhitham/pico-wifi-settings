@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 #
 # Copyright (c) 2025 Jack Whitham
 #
@@ -7,24 +6,20 @@
 # Remote update service for Micropython pico-wifi-settings.
 #
 
-import argparse
-import asyncio
 import hashlib
 import os
+import socket
 import struct
-import sys
-import traceback
-from asyncio import StreamReader, StreamWriter
-from pathlib import Path
-from abc import abstractmethod
 
-from .hostname import BOARD_ID
+import cryptolib  # type: ignore
+from . import hostname, configuration, remote_handlers
 
 # Type-checking
 try:
     import typing
 except ImportError:
     pass
+
 
 PORT_NUMBER =               1404
 RESPONDER_REQUEST_MAGIC =   "PWS?"
@@ -84,7 +79,7 @@ CIPHER_MODE = 2
 #    uint8_t     data_hash[DATA_HASH_SIZE];
 # } enc_message_header_t;
 # The size of this structure should be AES_BLOCK_SIZE
-HEADER_STRUCT = "<IIB7s"
+HEADER_STRUCT = "<IiB7s"
 HEADER_DATA_HASH_OFFSET = AES_BLOCK_SIZE - DATA_HASH_SIZE
 
 def __unpack_header(header: bytes) -> typing.Tuple[int, int, int, bytes]:
@@ -116,24 +111,18 @@ class ReceiveState:
     SEND_ENC_REPLY_HEADER_WITH_CALLBACK2 = 17
     # Special state when waiting to finish sending
     EXECUTE_CALLBACK2 = 18
-    // Disconnected state
+    # Disconnected state
     DISCONNECT = 19
 
 
-HandlerCallback1 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any],
-                                   typing.Tuple[bytes, int]]]
-# (msg_type, request_data_buffer, input_parameter, arg) -> (reply_data_buffer, return_value)
-HandlerCallback2 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any]]]
-# (msg_type, reply_data_buffer, return_value, arg) -> None
-
 class HandlerCallbackArg:
-    callback1: HandlerCallback1
-    callback2: HandlerCallback2
+    callback1: remote_handlers.HandlerCallback1
+    callback2: remote_handlers.HandlerCallback2
     arg: typing.Any
 
     def __init__(self, 
-            callback1: HandlerCallback1,
-            callback2: HandlerCallback2,
+            callback1: remote_handlers.HandlerCallback1,
+            callback2: remote_handlers.HandlerCallback2,
             arg: typing.Any) -> None:
         self.callback1 = callback1
         self.callback2 = callback2
@@ -149,7 +138,7 @@ def __make_greeting() -> None:
 
     # generate text
     data = "xxx\r{}\rmicropython pico-wifi-settings version {}\r\n".format(
-        BOARD_ID,
+        hostname.BOARD_ID,
         configuration.WIFI_SETTINGS_VERSION_STRING).encode()
     # pad to block size
     data += (b"\x00" * (AES_BLOCK_SIZE - (len(data) % AES_BLOCK_SIZE)))
@@ -162,6 +151,7 @@ def __make_greeting() -> None:
     return data
 
 GREETING_BYTES = __make_greeting()
+RESPONDER_REPLY_BYTES = (RESPONDER_REPLY_MAGIC + hostname.BOARD_ID).encode()
 
 class Session:
     data: bytes = b"" # MAX_DATA_SIZE
@@ -637,21 +627,19 @@ def __responder_recv(udp_sock: socket.socket) -> None:
         return
 
     # Check board ID
-    if not text[4:].startswith(BOARD_ID):
+    if not text[4:].startswith(hostname.BOARD_ID):
         # Request is for a different board
         return
 
     # Respond to request with complete board id
-    text = RESPONDER_REPLY_MAGIC + BOARD_ID
-    packet = text.encode()
     try:
-        sock.sendto(packet, addr)
+        sock.sendto(RESPONDER_REPLY_BYTES, addr)
     except Exception:
         return
 
 def set_handler(
         msg_type: int,
-        callback1: HandlerCallback1,
+        callback1: remote_handlers.HandlerCallback1,
         arg: typing.Any) -> None:
     """Register a stage 1 callback function to handle remote messages of the specified type.
 
@@ -683,8 +671,8 @@ def set_handler(
 
 def set_two_stage_handler(
         msg_type: int,
-        callback1: HandlerCallback1,
-        callback2: HandlerCallback2,
+        callback1: remote_handlers.HandlerCallback1,
+        callback2: remote_handlers.HandlerCallback2,
         arg: typing.Any) -> None:
     """Register stage 1 and stage2 callback functions to handle remote messages of the specified type.
 

@@ -8,6 +8,9 @@
 # 
 #
 
+# Version to report via info messages
+WIFI_SETTINGS_VERSION_STRING = "0.3.1"
+
 # Maximum time allowed between calling cyw43_wifi_join and getting an
 # IP address (milliseconds). If this timeout expires, wifi_settings will
 # try a different hotspot or rescan. The attempt to join a hotspot can fail
