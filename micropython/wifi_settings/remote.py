@@ -12,7 +12,7 @@ import socket
 import struct
 
 import cryptolib  # type: ignore
-from . import hostname, configuration, remote_handlers
+from . import hostname, configuration, remote_handlers, storage
 
 # Type-checking
 try:
@@ -22,16 +22,18 @@ except ImportError:
 
 
 PORT_NUMBER =               1404
-RESPONDER_REQUEST_MAGIC =   "PWS?"
-RESPONDER_REPLY_MAGIC =     "PWS:"
+RESPONDER_REQUEST_MAGIC =  b"PWS?"
+RESPONDER_REPLY_MAGIC =    b"PWS:"
 BOARD_ID_SIZE =             8 
 RESPONDER_MAX_SIZE =        20
+MAX_DATA_SIZE =             4096
 
 CHALLENGE_SIZE =            15
 AUTHENTICATION_SIZE =       15
 AES_BLOCK_SIZE =            16
 DATA_HASH_SIZE =            7
 HMAC_BLOCK_SIZE =           64
+HMAC_DIGEST_SIZE =          32
 
 ID_GREETING =               70      # s->c
 ID_REQUEST =                71      # s<-c
@@ -82,12 +84,13 @@ CIPHER_MODE = 2
 HEADER_STRUCT = "<IiB7s"
 HEADER_DATA_HASH_OFFSET = AES_BLOCK_SIZE - DATA_HASH_SIZE
 
-def __unpack_header(header: bytes) -> typing.Tuple[int, int, int, bytes]:
+def __unpack_header(header: bytes):
+    # return type is typing.Tuple[int, int, int, bytes]
     return struct.unpack(HEADER_STRUCT, header)
 
 def __pack_header(data_size: int, parameter_or_result: int,
             msg_type: int, data_hash: bytes = ZERO_BLOCK[:DATA_HASH_SIZE]) -> bytes:
-    return struct.pack(HEADER_STRUCT, header)
+    return struct.pack(HEADER_STRUCT, data_size, parameter_or_result, msg_type, data_hash)
 
 class ReceiveState:
     # Authentication states (unencrypted)
@@ -132,26 +135,8 @@ g_handler_table: typing.Dict[int, HandlerCallbackArg] = {}
 g_hmac_padded_key_1: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_hmac_padded_key_2: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_secret_valid: bool = False
-
-def __make_greeting() -> None:
-    """Internal. Create a greeting string to be sent over the network to a client."""
-
-    # generate text
-    data = "xxx\r{}\rmicropython pico-wifi-settings version {}\r\n".format(
-        hostname.BOARD_ID,
-        configuration.WIFI_SETTINGS_VERSION_STRING).encode()
-    # pad to block size
-    data += (b"\x00" * (AES_BLOCK_SIZE - (len(data) % AES_BLOCK_SIZE)))
-
-    # bytes 0 .. 2 are fixed fields in the reply
-    # bytes 4 .. 19 contain the board ID in uppercase hex format
-    # bytes 20 .. <unspecified> contain UTF-8 text that can be printed
-    # Replace bytes 0 - 2
-    data = bytes([ID_GREETING, PROTOCOL_VERSION, len(data) // AES_BLOCK_SIZE]) + data[3:]
-    return data
-
-GREETING_BYTES = __make_greeting()
-RESPONDER_REPLY_BYTES = (RESPONDER_REPLY_MAGIC + hostname.BOARD_ID).encode()
+g_greeting: bytes = b""
+g_responder_reply_bytes: bytes = b""
 
 class Session:
     data: bytes = b"" # MAX_DATA_SIZE
@@ -163,12 +148,12 @@ class Session:
     encrypt: cryptolib.aes
     reply_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
     request_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    state: ReceiveState = ReceiveState.SEND_GREETING
+    state: int = ReceiveState.SEND_GREETING
     data_index: int = 0
 
     def __init__(self) -> None:
         """Set up a greeting."""
-        self.data = GREETING_BYTES
+        self.data = g_greeting
         self.state = ReceiveState.SEND_GREETING
 
     def generate_authentication(self, append_code: bytes) -> bytes:
@@ -196,10 +181,10 @@ class Session:
     def generate_keys(self) -> None:
         """Generate encryption and decryption keys
         and Micropython cryptolib objects."""
-        raw_key = self.generate_authentication("SK")
+        raw_key = self.generate_authentication(b"SK")
         self.encrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
 
-        raw_key = self.generate_authentication("CK")
+        raw_key = self.generate_authentication(b"CK")
         self.decrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
 
     def generate_enc_data_hash(self, header: bytes) -> bytes:
@@ -219,8 +204,8 @@ class Session:
         The result is stored in self.reply_header (clear) and self.output_block (encrypted)."""
 
         # Only the msg_type and data_hash fields are used - everything else is 0
-        self.reply_header = self.pack_header(0, 0, msg_type, self.generate_enc_data_hash(
-                                self.pack_header(0, 0, msg_type)))
+        self.reply_header = __pack_header(0, 0, msg_type, self.generate_enc_data_hash(
+                                __pack_header(0, 0, msg_type)))
 
         # Encrypt
         self.output_block = self.encrypt.encrypt(self.reply_header)
@@ -240,7 +225,7 @@ class Session:
             # (self.data contains a greeting message)
             self.output_block = self.data[self.data_index : self.data_index + AES_BLOCK_SIZE]
             self.data_index += AES_BLOCK_SIZE
-            if self.data_index >= self.reply_header.data_size:
+            if self.data_index >= len(self.data):
                 self.state = ReceiveState.EXPECT_REQUEST
         elif self.state == ReceiveState.EXPECT_REQUEST:
             # Second message, client to server. Client sends the client challenge.
@@ -254,7 +239,7 @@ class Session:
             pass
         elif self.state == ReceiveState.SEND_AUTHENTICATION:
             # Fifth message, server to client. Server sends the server authentication.
-            self.output_block = bytes([ID_RESPONSE]) + self.generate_authentication("SA")
+            self.output_block = bytes([ID_RESPONSE]) + self.generate_authentication(b"SA")
             self.state = ReceiveState.EXPECT_ACKNOWLEDGE
         elif self.state == ReceiveState.EXPECT_ACKNOWLEDGE:
             # Sixth message, client to server. Client indicates authentication is complete.
@@ -290,7 +275,7 @@ class Session:
                 # Header only - no payload
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
             else:
-            return True
+                self.state = ReceiveState.SEND_ENC_REPLY_PAYLOAD
         elif self.state == ReceiveState.SEND_ENC_REPLY_PAYLOAD:
             # Encrypted stage. Send payload data to the client.
             self.output_block = self.encrypt.encrypt(
@@ -315,7 +300,7 @@ class Session:
 
         # Check data hash is correct
         expect_hash = self.generate_enc_data_hash(self.request_header)
-        if expect_hash != self.request_header[ENC_HEADER_DATA_HASH_OFFSET:]:
+        if expect_hash != self.request_header[HEADER_DATA_HASH_OFFSET:]:
             self.state = ReceiveState.SEND_CORRUPT_ERROR
             return
 
@@ -332,10 +317,10 @@ class Session:
         self.data = b""
         result = 0
 
-        if g_handler_table[handler_id].callback1:
+        callback1 = g_handler_table[handler_id].callback1
+        if callback1:
             # call first handler
-            return_value = g_handler_table[handler_id].callback1(
-                    msg_type, self.data, parameter, g_handler_table[handler_id].arg)
+            return_value = callback1(msg_type, self.data, parameter, g_handler_table[handler_id].arg)
             # expect a return like (reply_data_buffer, return_value)
             if ((type(return_value) != tuple)
             or (len(return_value) != 2)
@@ -365,8 +350,8 @@ class Session:
             reply_data_size = len(self.data)
 
         # Generate reply header
-        self.reply_header = self.pack_header(reply_data_size, result, ID_OK,
-            self.generate_enc_data_hash(self.pack_header(reply_data_size, result, ID_OK)))
+        self.reply_header = __pack_header(reply_data_size, result, ID_OK,
+            self.generate_enc_data_hash(__pack_header(reply_data_size, result, ID_OK)))
 
     def handle_enc_request_start(self) -> None:
         """Process the start of an encrypted request,
@@ -379,12 +364,12 @@ class Session:
         handler_id = msg_type - ID_FIRST_HANDLER
         if not ((handler_id in g_handler_table)
         and (g_handler_table[handler_id].callback1 or g_handler_table[handler_id].callback2)):
-            self.state = SEND_BAD_HANDLER_ERROR
+            self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
             return
 
         # Check parameters are valid, start processing the request
-        if data_size > MAX_DATA_SIZE: {
-            self.state = SEND_BAD_PARAM_ERROR
+        if data_size > MAX_DATA_SIZE:
+            self.state = ReceiveState.SEND_BAD_PARAM_ERROR
             return
 
         # Prepare for receiving the request payload
@@ -418,18 +403,17 @@ class Session:
             else:
                 self.client_challenge = self.input_block[1:AES_BLOCK_SIZE]
                 self.state = ReceiveState.SEND_CHALLENGE
-            }
             return True
         elif self.state == ReceiveState.SEND_CHALLENGE:
             # Third message, server to client. Server sends the server challenge.
             return False
         elif self.state == ReceiveState.EXPECT_AUTHENTICATION:
             # Fourth message, client to server. Client sends the client authentication.
-            if block[0] != ID_AUTHENTICATION:
+            if self.input_block[0] != ID_AUTHENTICATION:
                 self.state = ReceiveState.SEND_BAD_MSG_ERROR
             else:
-                check_authentication = self.generate_authentication("CA")
-                if check_authentication != block[1:]:
+                check_authentication = self.generate_authentication(b"CA")
+                if check_authentication != self.input_block[1:]:
                     self.state = ReceiveState.SEND_AUTH_ERROR
                 else:
                     self.state = ReceiveState.SEND_AUTHENTICATION
@@ -439,7 +423,7 @@ class Session:
             return False
         elif self.state == ReceiveState.EXPECT_ACKNOWLEDGE:
             # Sixth message, client to server. Client indicates authentication is complete.
-            if block[0] != ID_ACKNOWLEDGE:
+            if self.input_block[0] != ID_ACKNOWLEDGE:
                 self.state = ReceiveState.SEND_BAD_MSG_ERROR
             else:
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
@@ -502,7 +486,7 @@ class Session:
 
             # try to send a block - we can't tell if this will succeed beforehand
             try:
-                size = sock.write(self.output_block)
+                size = sock.send(self.output_block)
             except Exception:
                 # failure, some unhandlable error - abandon the connection
                 self.state = ReceiveState.DISCONNECT
@@ -573,13 +557,10 @@ class Session:
             (_, result, msg_type, _) = __unpack_header(self.request_header)
             handler_id = msg_type - ID_FIRST_HANDLER
 
-            if ((handler_id in g_handler_table)
-            and g_handler_table[handler_id].callback2):
-                g_handler_table[handler_id].callback2(
-                    msg_type,
-                    self.data,
-                    result,
-                    g_handler_table[handler_id].arg)
+            if handler_id in g_handler_table:
+                callback2 = g_handler_table[handler_id].callback2
+                if callback2:
+                    callback2(msg_type, self.data, result, g_handler_table[handler_id].arg)
 
             # Result of executing callback2 cannot be reported
 
@@ -599,13 +580,13 @@ def __server_accept(listen_sock: socket.socket) -> None:
     A Session object is created for the new connection."""
 
     try:
-        client_sock = listen_sock.accept()
+        (client_sock, _) = listen_sock.accept()
     except Exception:
         return
 
     session = Session()
     __set_micropython_lwip_callback(client_sock, session.server_socket_callback)
-    session.send_while_able()
+    session.send_while_able(client_sock)
 
 def __responder_recv(udp_sock: socket.socket) -> None:
     """Internal. This callback is called when a UDP packet is received on the responder socket."""
@@ -615,25 +596,19 @@ def __responder_recv(udp_sock: socket.socket) -> None:
     except Exception:
         return
 
-    try:
-        text = packet.decode()
-    except Exception:
-        # Not well-formed UTF-8
-        return
-
     # Check magic
-    if not text.startswith(RESPONDER_REQUEST_MAGIC):
+    if not packet.startswith(RESPONDER_REQUEST_MAGIC):
         # Invalid request - not magic
         return
 
     # Check board ID
-    if not text[4:].startswith(hostname.BOARD_ID):
+    if not packet[4:].startswith(g_responder_reply_bytes[4:]):
         # Request is for a different board
         return
 
     # Respond to request with complete board id
     try:
-        sock.sendto(RESPONDER_REPLY_BYTES, addr)
+        udp_sock.sendto(g_responder_reply_bytes, addr)
     except Exception:
         return
 
@@ -731,23 +706,49 @@ def update_secret() -> None:
             + bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
     g_secret_valid = True
 
-def init() -> None:
+def init() -> bool:
+    """Initialise the remote access service."""
+    global g_greeting, g_responder_reply_bytes
+
+    if g_greeting:
+        # Already initialised
+        return
+
     # Load secret
     update_secret()
+
+    # Create a greeting string to be sent over the network to a TCP client.
+    data = "xxx\r{}\rmicropython pico-wifi-settings version {}\r\n".format(
+        hostname.get_board_id_hex(),
+        configuration.WIFI_SETTINGS_VERSION_STRING).encode()
+    # pad to block size
+    data += (b"\x00" * (AES_BLOCK_SIZE - (len(data) % AES_BLOCK_SIZE)))
+
+    # bytes 0 .. 2 are fixed fields in the reply
+    # bytes 4 .. 19 contain the board ID in uppercase hex format
+    # bytes 20 .. <unspecified> contain UTF-8 text that can be printed
+    # Replace bytes 0 - 2
+    g_greeting = bytes([ID_GREETING, PROTOCOL_VERSION, len(data) // AES_BLOCK_SIZE]) + data[3:]
+
+    # Create a reply for sending via UDP (the responder) using the board ID from g_greeting
+    g_responder_reply_bytes = RESPONDER_REPLY_MAGIC + g_greeting[4:20]
 
     # Install basic handlers for messages
     set_handler(ID_PICO_INFO_HANDLER, remote_handlers.pico_info_handler, None)
     set_handler(ID_UPDATE_HANDLER, remote_handlers.update_handler, None)
-    wifi_settings_remote_set_two_stage_handler(
+    set_two_stage_handler(
             ID_UPDATE_REBOOT_HANDLER,
             remote_handlers.update_reboot_handler1,
             remote_handlers.update_reboot_handler2, None)
 
+    # Bind TCP socket
     try:
         listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listen_sock.bind('', PORT_NUMBER)
+        listen_sock.bind(('', PORT_NUMBER))
         listen_sock.listen(1)
         __set_micropython_lwip_callback(listen_sock, __server_accept)
     except Exception:
-        # Failed to start up remote service - carry on anyway
-        pass
+        # Failed to start up remote service - carry on with other startup
+        return False
+
+    # Bind UDP socket for responder

@@ -12,20 +12,20 @@
 from . import storage
 
 import struct
-import machine
-try:
-    # board id is decoded as a 64-bit big-endian unsigned integer
-    # then re-encoded as 16 upper-case hex bytes. This never changes.
-    BOARD_ID = "{:016X}".format(struct.unpack(">Q", machine.unique_id())[0])
-except Exception:
-    BOARD_ID = "0" * 16
+import machine # type: ignore
 
 # The hostname can be changed at runtime.
 g_hostname = ""
 
 def get_board_id_hex() -> str:
     """Return the unique board ID as 16 upper-case hex bytes."""
-    return BOARD_ID
+    try:
+        # board id is decoded as a 64-bit big-endian unsigned integer
+        # then re-encoded as 16 upper-case hex bytes. This never changes.
+        value = struct.unpack(">Q", machine.unique_id())[0] & ((1 << 64) - 1)
+    except Exception:
+        value = 0
+    return "{:016X}".format(value)
 
 def get_hostname() -> str:
     """Return the hostname - either configured in the wifi settings file,

@@ -15,7 +15,7 @@ try:
     HandlerCallback1 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any],
                                        typing.Tuple[bytes, int]]]
     # (msg_type, request_data_buffer, input_parameter, arg) -> (reply_data_buffer, return_value)
-    HandlerCallback2 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any]]]
+    HandlerCallback2 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any], None]]
     # (msg_type, reply_data_buffer, return_value, arg) -> None
 except ImportError:
     pass
@@ -30,7 +30,7 @@ def pico_info_handler(
     out: typing.List = []
 
     out.append(b"board_id=")
-    out.append(hostname.BOARD_ID)
+    out.append(hostname.get_board_id_hex())
     out.append(b"\n")
 
     return (b"".join(out), 0)
