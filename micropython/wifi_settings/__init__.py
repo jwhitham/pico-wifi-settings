@@ -16,4 +16,6 @@ from .connection import deinit
 from .connection import connect
 from .connection import disconnect
 from .connection import is_connected
+from .remote import MAX_DATA_SIZE, ID_FIRST_USER_HANDLER, ID_LAST_USER_HANDLER
+from .remote import update_secret, set_handler, set_two_stage_handler
 from .storage import get_value_for_key

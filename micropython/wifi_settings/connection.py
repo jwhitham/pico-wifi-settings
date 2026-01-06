@@ -8,7 +8,7 @@
 # 
 #
 
-from . import storage, configuration, hostname
+from . import storage, configuration, hostname, remote
 
 # Type-checking
 try:
@@ -420,7 +420,7 @@ def __periodic_callback_isr(_) -> None:
     This function can be called as a timer interrupt."""
     micropython.schedule(__periodic_callback, 0)
 
-def init() -> None:
+def init(enable_remote_access: bool = True) -> None:
     """Initialise pico-wifi-settings for Micropython."""
     if g_wifi_state.cstate != ConnectState.UNINITIALISED:
         # init() not allowed in this state - do nothing
@@ -453,10 +453,9 @@ def init() -> None:
                       callback=__periodic_callback_isr,
                       mode=machine.Timer.PERIODIC, hard=True)
 
-    # #ifdef ENABLE_REMOTE_UPDATE
-    # // Start remote access service
-    # g_wifi_state.hw_error_code = wifi_settings_remote_init();
-    # #endif
+    # Start remote access service
+    if enable_remote_access:
+        remote.init()
 
 def deinit() -> None:
     """Deinitialise pico-wifi-settings for Micropython (disconnect and stop periodic task)."""

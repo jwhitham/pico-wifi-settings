@@ -135,7 +135,7 @@ g_handler_table: typing.Dict[int, HandlerCallbackArg] = {}
 g_hmac_padded_key_1: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_hmac_padded_key_2: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_secret_valid: bool = False
-g_greeting: bytes = b""
+g_remote_service_greeting: bytes = b""
 g_responder_reply_bytes: bytes = b""
 
 class Session:
@@ -153,7 +153,7 @@ class Session:
 
     def __init__(self) -> None:
         """Set up a greeting."""
-        self.data = g_greeting
+        self.data = g_remote_service_greeting
         self.state = ReceiveState.SEND_GREETING
 
     def generate_authentication(self, append_code: bytes) -> bytes:
@@ -320,7 +320,12 @@ class Session:
         callback1 = g_handler_table[handler_id].callback1
         if callback1:
             # call first handler
-            return_value = callback1(msg_type, self.data, parameter, g_handler_table[handler_id].arg)
+            try:
+                return_value = callback1(msg_type, self.data, parameter, g_handler_table[handler_id].arg)
+            except Exception:
+                self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+                return
+
             # expect a return like (reply_data_buffer, return_value)
             if ((type(return_value) != tuple)
             or (len(return_value) != 2)
@@ -560,7 +565,10 @@ class Session:
             if handler_id in g_handler_table:
                 callback2 = g_handler_table[handler_id].callback2
                 if callback2:
-                    callback2(msg_type, self.data, result, g_handler_table[handler_id].arg)
+                    try:
+                        callback2(msg_type, self.data, result, g_handler_table[handler_id].arg)
+                    except Exception:
+                        pass
 
             # Result of executing callback2 cannot be reported
 
@@ -706,18 +714,12 @@ def update_secret() -> None:
             + bytes([0x5c for _ in range(HMAC_BLOCK_SIZE - HMAC_DIGEST_SIZE)]))
     g_secret_valid = True
 
-def init() -> bool:
-    """Initialise the remote access service."""
-    global g_greeting, g_responder_reply_bytes
+def __make_greetings() -> None:
+    """Create greetings to be sent over the network to clients."""
 
-    if g_greeting:
-        # Already initialised
-        return
+    global g_remote_service_greeting, g_responder_reply_bytes
 
-    # Load secret
-    update_secret()
-
-    # Create a greeting string to be sent over the network to a TCP client.
+    # TCP greeting
     data = "xxx\r{}\rmicropython pico-wifi-settings version {}\r\n".format(
         hostname.get_board_id_hex(),
         configuration.WIFI_SETTINGS_VERSION_STRING).encode()
@@ -728,10 +730,23 @@ def init() -> bool:
     # bytes 4 .. 19 contain the board ID in uppercase hex format
     # bytes 20 .. <unspecified> contain UTF-8 text that can be printed
     # Replace bytes 0 - 2
-    g_greeting = bytes([ID_GREETING, PROTOCOL_VERSION, len(data) // AES_BLOCK_SIZE]) + data[3:]
+    data = bytes([ID_GREETING, PROTOCOL_VERSION, len(data) // AES_BLOCK_SIZE]) + data[3:]
+    g_remote_service_greeting = data
 
-    # Create a reply for sending via UDP (the responder) using the board ID from g_greeting
-    g_responder_reply_bytes = RESPONDER_REPLY_MAGIC + g_greeting[4:20]
+    # Create a reply for sending via UDP (the responder) using the board ID
+    g_responder_reply_bytes = RESPONDER_REPLY_MAGIC + data[4:4 + (BOARD_ID_SIZE * 2)]
+
+def init() -> None:
+    """Initialise the remote access service."""
+    if g_remote_service_greeting:
+        # Already initialised
+        return
+
+    # Load secret
+    update_secret()
+
+    # Create greetings to be sent over the network to clients
+    __make_greetings()
 
     # Install basic handlers for messages
     set_handler(ID_PICO_INFO_HANDLER, remote_handlers.pico_info_handler, None)
@@ -741,7 +756,7 @@ def init() -> bool:
             remote_handlers.update_reboot_handler1,
             remote_handlers.update_reboot_handler2, None)
 
-    # Bind TCP socket
+    # Bind TCP socket for remote service
     try:
         listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listen_sock.bind(('', PORT_NUMBER))
@@ -749,6 +764,13 @@ def init() -> bool:
         __set_micropython_lwip_callback(listen_sock, __server_accept)
     except Exception:
         # Failed to start up remote service - carry on with other startup
-        return False
+        raise # return
 
     # Bind UDP socket for responder
+    try:
+        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_sock.bind(('', PORT_NUMBER))
+        __set_micropython_lwip_callback(udp_sock, __responder_recv)
+    except Exception:
+        # Failed to start up responder - carry on with other startup
+        raise # return
