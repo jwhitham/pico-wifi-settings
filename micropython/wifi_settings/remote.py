@@ -68,6 +68,7 @@ HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
 PROTOCOL_VERSION = 1
 AES_IV = ZERO_BLOCK = b"\x00" * AES_BLOCK_SIZE
 PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
+DEBUG_HANDLERS = True
 
 # Magic number for CBC mode
 # see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
@@ -311,9 +312,10 @@ class Session:
         handler_id = msg_type - ID_FIRST_HANDLER
 
         # Check handler is valid (this was already checked, but g_handler_table may have changed)
-        if not ((handler_id in g_handler_table)
-        and (g_handler_table[handler_id].callback1 or g_handler_table[handler_id].callback2)):
+        if handler_id not in g_handler_table:
             self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+            if DEBUG_HANDLERS:
+                print("BadHandlerError: {} not in table at end".format(handler_id))
             return
 
         self.data = b""
@@ -324,8 +326,10 @@ class Session:
             # call first handler
             try:
                 return_value = callback1(msg_type, self.data, parameter, g_handler_table[handler_id].arg)
-            except Exception:
+            except Exception as e:
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+                if DEBUG_HANDLERS:
+                    print("BadHandlerError: callback1 exception {}".format(e))
                 return
 
             # expect a return like (reply_data_buffer, return_value)
@@ -334,6 +338,8 @@ class Session:
             or (type(return_value[0]) != bytes)
             or (type(return_value[1]) != int)):
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+                if DEBUG_HANDLERS:
+                    print("BadHandlerError: callback1 return {}".format(return_value))
                 return
             self.data = return_value[0]
             result = return_value[1]
@@ -341,6 +347,10 @@ class Session:
             # Limit data size as the C implementation does
             if len(self.data) > MAX_DATA_SIZE:
                 self.data = self.data[:MAX_DATA_SIZE]
+            # Pad data if necessary
+            pad = AES_BLOCK_SIZE - (len(self.data) % AES_BLOCK_SIZE)
+            if pad > 0:
+                self.data += b"\x00" * pad
 
         self.data_index = 0
 
@@ -369,9 +379,16 @@ class Session:
         # Check handler ID is within the allowed range
         (data_size, parameter, msg_type, _) = __unpack_header(self.request_header)
         handler_id = msg_type - ID_FIRST_HANDLER
-        if not ((handler_id in g_handler_table)
-        and (g_handler_table[handler_id].callback1 or g_handler_table[handler_id].callback2)):
+        if handler_id not in g_handler_table:
             self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+            if DEBUG_HANDLERS:
+                print("BadHandlerError: {} not in table".format(handler_id))
+            return
+        if not (g_handler_table[handler_id].callback1
+                or g_handler_table[handler_id].callback2):
+            self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+            if DEBUG_HANDLERS:
+                print("BadHandlerError: {} lacks any callback".format(handler_id))
             return
 
         # Check parameters are valid, start processing the request
@@ -569,8 +586,9 @@ class Session:
                 if callback2:
                     try:
                         callback2(msg_type, self.data, result, g_handler_table[handler_id].arg)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if DEBUG_HANDLERS:
+                            print("BadHandlerError: callback2 exception {}".format(e))
 
             # Result of executing callback2 cannot be reported
 

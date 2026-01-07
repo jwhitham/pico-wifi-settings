@@ -29,11 +29,11 @@ def pico_info_handler(
     """For ID_PICO_INFO_HANDLER messages"""
     out: typing.List = []
 
-    out.append(b"board_id=")
+    out.append("board_id=")
     out.append(hostname.get_board_id_hex())
-    out.append(b"\n")
+    out.append("\n")
 
-    return (b"".join(out), 0)
+    return ("".join(out).encode(), 0)
 
 def update_handler(
         msg_type: int,
