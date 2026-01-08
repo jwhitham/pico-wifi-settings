@@ -58,6 +58,7 @@ class WiFiState:
     network: typing.Any = None      # micropython network module
     nic: typing.Any = None          # micropython network.WLAN object
     timer: typing.Any = None        # micropython Timer object
+    enable_remote_access: bool = False
 
 g_wifi_state = WiFiState()
 
@@ -391,6 +392,8 @@ def __periodic_callback(_) -> None:
                 # Successful
                 g_wifi_state.ssid_scan_info[g_wifi_state.selected_ssid_index] = SSIDScanInfo.SUCCESS
                 g_wifi_state.cstate = ConnectState.CONNECTED_IP
+                if g_wifi_state.enable_remote_access:
+                    remote.listen(get_ip())
             elif __time_reached(g_wifi_state.connect_timeout_time):
                 # Connection failed with a timeout
                 __give_up_connecting(SSIDScanInfo.TIMEOUT)
@@ -447,14 +450,15 @@ def init(enable_remote_access: bool = True) -> None:
     g_wifi_state.scan_holdoff_time = __make_timeout_time_ms(0)
     g_wifi_state.cstate = ConnectState.DISCONNECTED
     g_wifi_state.selected_ssid_index = 0
+    g_wifi_state.enable_remote_access = enable_remote_access
 
     # Start periodic worker
     g_wifi_state.timer = machine.Timer(-1, period=configuration.PERIODIC_TIME_MS,
                       callback=__periodic_callback_isr,
                       mode=machine.Timer.PERIODIC, hard=True)
 
-    # Start remote access service
-    if enable_remote_access:
+    # Set up remote access service
+    if g_wifi_state.enable_remote_access:
         remote.init()
 
 def deinit() -> None:

@@ -138,6 +138,8 @@ g_hmac_padded_key_2: bytes = b"\x00" * HMAC_DIGEST_SIZE
 g_secret_valid: bool = False
 g_remote_service_greeting: bytes = b""
 g_responder_reply_bytes: bytes = b""
+g_remote_socket: typing.Optional[socket.socket] = None
+g_responder_socket: typing.Optional[socket.socket] = None
 
 class Session:
     data: bytes = b"" # MAX_DATA_SIZE
@@ -777,21 +779,35 @@ def init() -> None:
             remote_handlers.update_reboot_handler1,
             remote_handlers.update_reboot_handler2, None)
 
-    # Bind TCP socket for remote service
-    try:
-        listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listen_sock.bind(('', PORT_NUMBER))
-        listen_sock.listen(1)
-        __set_micropython_lwip_callback(listen_sock, __server_accept)
-    except Exception:
-        # Failed to start up remote service - carry on with other startup
-        raise # return
+def listen(ip_address: str) -> None:
+    """Bind TCP socket for remote service."""
+    global g_remote_socket, g_responder_socket
 
-    # Bind UDP socket for responder
+    if g_remote_socket is not None:
+        try:
+            g_remote_socket.close()
+        except Exception:
+            pass
+        g_remote_socket = None
+
+    if g_responder_socket is not None:
+        try:
+            g_responder_socket.close()
+        except Exception:
+            pass
+        g_responder_socket = None
+
     try:
-        udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_sock.bind(('', PORT_NUMBER))
-        __set_micropython_lwip_callback(udp_sock, __responder_recv)
-    except Exception:
-        # Failed to start up responder - carry on with other startup
-        raise # return
+        g_remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        g_remote_socket.bind((ip_address, PORT_NUMBER))
+        g_remote_socket.listen(1)
+        __set_micropython_lwip_callback(g_remote_socket, __server_accept)
+    except Exception as e:
+        print("wifi_settings.remote.listen: remote_socket: {}".format(e))
+
+    try:
+        g_responder_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        g_responder_socket.bind((ip_address, PORT_NUMBER))
+        __set_micropython_lwip_callback(g_responder_socket, __responder_recv)
+    except Exception as e:
+        print("wifi_settings.remote.listen: responder_socket: {}".format(e))
