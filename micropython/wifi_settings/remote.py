@@ -571,6 +571,7 @@ class Session:
             return
 
         # Special case for executing a callback after closing the connection
+        # This may not work as there is no callback for tcp_sent
         if self.state == ReceiveState.EXECUTE_CALLBACK2:
             # Data has been sent, execute callback2 if it exists (close first)
             self.state = ReceiveState.DISCONNECT
@@ -806,6 +807,7 @@ def listen(ip_address: str) -> None:
         print("wifi_settings.remote.listen: remote_socket: {}".format(e))
 
     try:
+        # This won't work because of https://github.com/micropython/micropython/issues/3594
         g_responder_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         g_responder_socket.bind((ip_address, PORT_NUMBER))
         __set_micropython_lwip_callback(g_responder_socket, __responder_recv)
