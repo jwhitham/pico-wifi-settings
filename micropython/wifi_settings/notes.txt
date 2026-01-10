@@ -1,3 +1,4 @@
+---
 
 Micropython isn't multithreaded - Python code doesn't run in parallel. How can we run the wifi-settings connection code, or the remote access service?
 One method is to use asynchronous Python and provide a service which should be executed asynchronously during user code. This depends on the user code executing the command (but then, in C, we depend on the user calling an API function). It also assumes the user code doesn't do something that disrupts async execution (such as entering an infinite loop). The same is somewhat true in C, though C code would also have to disable interrupts to really close everything off. I don't think the Python code can do this. 
@@ -102,7 +103,7 @@ Yes that works!
 
 10.88.180.232
 
-
+---
 
 How can I implement the remote service in Python?
 I need to listen on a TCP socket and accept connections.
@@ -165,6 +166,34 @@ The C program used get_rand_128. This uses the ROSC as one of its entropy source
 on RP2040. On RP2350 there is a hardware RNG which is also used. Micropython does not use this.
 The random numbers may not be as good quality.
 
+---
 
-Is there a better way to manage a data buffer in Micropython? bytes is immutable,
+Q. Is there a better way to manage a data buffer in Micropython? bytes is immutable,
 so self.data += block will reallocate
+
+A. Yes, bytearray
+
+---
+
+UDP issue: pico-wifi-settings needs UDP in order to respond to searches for boards
+by broadcast on port 1404. But this doesn't work on Micropython. Receiving a
+UDP packet does not trigger any callback (registered with lwip_socket_setsockopt(20)).
+The issue was already reported. https://github.com/micropython/micropython/issues/3594 .
+I created a pull request. The problem is easily fixed but I don't know if the Micropython's
+maintainers want to keep this method of handling packets. I thought it might be used
+for asyncio but as far as I can tell, it isn't. I think asyncio's core might wait for TCP
+packets by polling rather than the setsockopt(20) callback, possibly in core.run_until_complete,
+which is possible for asyncio because one foreground task can block in a polling loop, but
+it won't work for pico-wifi-settings which needs to run in the background. The webrepl server
+seems to be the only official use case for setsockopt(20) and I suspect that the
+maintainers might prefer a different and more general way to do it.
+
+On Micropython asyncio doesn't support UDP anyway, so I can't pivot to a completely
+asyncio-based implementation of pico-wifi-settings, which in any case would bring
+other problems as described above.
+
+
+
+
+
+
