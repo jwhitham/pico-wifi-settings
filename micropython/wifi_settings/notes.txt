@@ -184,16 +184,25 @@ maintainers want to keep this method of handling packets. I thought it might be 
 for asyncio but as far as I can tell, it isn't. I think asyncio's core might wait for TCP
 packets by polling rather than the setsockopt(20) callback, possibly in core.run_until_complete,
 which is possible for asyncio because one foreground task can block in a polling loop, but
-it won't work for pico-wifi-settings which needs to run in the background. The webrepl server
-seems to be the only official use case for setsockopt(20) and I suspect that the
-maintainers might prefer a different and more general way to do it.
+it won't work for pico-wifi-settings which needs to run in the background.
 
 On Micropython asyncio doesn't support UDP anyway, so I can't pivot to a completely
 asyncio-based implementation of pico-wifi-settings, which in any case would bring
-other problems as described above.
+other problems as described above (user code would have to use asyncio properly and not
+be blocked somehow, so pico-wifi-settings would be less useful for recovering from bugs).
 
+The webrepl server seems to be the only official use case for setsockopt(20) and I suspect that the
+maintainers might prefer a different and more general way to do it. The lack of an officially
+#defined name for the magic number 20 is suspicious. Aside from UDP there are other cases where
+a callback might be useful, for example tcp_error and tcp_ack.
 
-
-
+Currently Micropython determines if an LwIP stream has data for reading, or space for writing,
+by calling lwip_socket_ioctl with request = MP_STREAM_POLL. This seems to be the standard way
+to determine if a "non-file-descriptor object" is ready for read/write - see
+MICROPY_PY_SELECT_IOCTL_CALL_PERIOD_MS. I would guess that there might be interest in replacing
+this with some kind of notification to avoid polling, and that would be more general, and
+setsockopt(20) would be obsolete, and hence there would be little interest in propagating it now,
+and thereby enabling programs and libraries which would cease to be compatible with Micropython
+in the future.
 
 
