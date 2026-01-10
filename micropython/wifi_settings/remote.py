@@ -621,7 +621,6 @@ def __server_accept(listen_sock: socket.socket) -> None:
 
 def __responder_recv(udp_sock: socket.socket) -> None:
     """Internal. This callback is called when a UDP packet is received on the responder socket."""
-
     try:
         (packet, addr) = udp_sock.recvfrom(RESPONDER_MAX_SIZE)
     except Exception:
@@ -633,7 +632,7 @@ def __responder_recv(udp_sock: socket.socket) -> None:
         return
 
     # Check board ID
-    if not packet[4:].startswith(g_responder_reply_bytes[4:]):
+    if not g_responder_reply_bytes[4:].startswith(packet[4:]):
         # Request is for a different board
         return
 
