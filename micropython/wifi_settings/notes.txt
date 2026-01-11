@@ -205,4 +205,68 @@ setsockopt(20) would be obsolete, and hence there would be little interest in pr
 and thereby enabling programs and libraries which would cease to be compatible with Micropython
 in the future.
 
+--
+so I am left with a few Micropython problems that I think cannot be solved without changes in
+the main Micropython source code.
+
+1. Searching for WiFi hotspots is a blocking operation, so the system becomes temporarily
+   unusable. Users of Micropython have complained that getaddrinfo is blocking and that this
+   is a nuisance when responsiveness is needed. A hotspot search is probably less bad (only local)
+   but still bad.
+
+2. There is no callback to show that a TCP connection has been closed or that an ACK has arrived,
+   so pico-wifi-settings can't take actions after transfers complete. This could be worked around
+   using machine.Timer - somewhat crudely, but perhaps well enough.
+
+3. There is no callback to notify when a UDP packet arrives, so pico-wifi-settings can't respond
+   to UDP broadcasts on port 1404 from remote_picotool. Again, machine.Timer could work around this
+   by having a periodic task that receives UDP. Also I have submitted a bug fix. And also, are these
+   UDP broadcasts really appropriate? There is also multicast DNS.
+
+There are workarounds for problems 2 and 3, and at this point pico-wifi-settings
+is able to respond to messages. It is not brilliant. bytes() is used everywhere, which is slow,
+and it isn't able to do much, and it's barely tested. But a vertical slice has been implemented.
+
+I know that multicast DNS requires UDP, so I was curious how it could work.
+https://github.com/cbrand/micropython-mdns.git uses a 100ms periodic task to receive UDP packets,
+so it's like the "machine.Timer" solution, though it uses asyncio. UDP support isn't in
+Micropython's asyncio, so the code uses the socket module directly.
+
+Should the C implementation of pico-wifi-settings be used here? I like the idea of reusing the
+existing code and all three problems go away if LwIP and cyw43 functions can be called directly.
+However Micropython would have to be rebuilt, there is no way to bring in the module in binary
+form because it has to use lwip functions, and I doubt that such a large feature would be wanted
+in the mainline Micropython. So I do still think that a C implementation is out. 
+
+What features should pico-wifi-settings provide on Micropython? The basic features are
+"remote_picotool info", "remote_picotool update" and "remote_picotool reboot", all of which
+can be implemented.
+
+Firmware updates are probably not feasible because these require storing the new firmware
+somewhere temporarily, and then installing it, and the only available storage is the filesystem
+since the Flash is fully used (first part firmware, second part filesystem). New firmware can be in
+a file, but the installer would need to be able to decode the filesystem structure without calling
+functions in Flash, and I think this is infeasible, since there are at least two supported filesystems
+with an abstraction layer.
+
+Updating the Python code is feasible; basically what's needed here is a feature like "mpremote cp"
+which can copy files to the target system. At the moment pico-wifi-settings doesn't have support
+for that because it makes no sense unless there is a filesystem.
+
+Thinking about that idea, and the various other features of "mpremote", I wanted to ask if "mpremote"
+could be adapted to communicate over the network
+I found this related thing: https://github.com/micropython/micropython/pull/18633 
+and I saw 
+    mpremote connect socket://localhost:2218 eval "1+1"
+given as an example. Actually this still uses serial communication, but "socket://" is recognised
+by the pyserial module as a port, and it translates the communications to TCP/IP. Theoretically
+the client side needs no changes. In reality, changes are needed, and PR 18633 incorporates these.
+It seems like there are lots of small bug fixes. Perhaps some mpremote features won't work well.
+The terminal feature is particularly concerning.
+
+I looked at the SerialTransport class. It does look as if this could be replaced by a NetworkTransport
+class - mpremote doesn't provide a plugin interface to help with this but mpremote could be modified
+directly (forked). I think the basic ability is to be able to run a block of code as if typed into the
+REPL. There is a special serial mode to allow large blocks to be sent ("raw paste"). Having sent a
+command it waits for a result which is also a block. 
 

@@ -7,7 +7,11 @@
 # pico-wifi-settings.
 #
 
-from . import hostname
+from . import hostname, connection, configuration, remote
+import machine # type: ignore
+
+PICO_ERROR_INVALID_ARG = -5
+PICO_ERROR_INVALID_DATA = -16
 
 # Type-checking
 try:
@@ -29,9 +33,20 @@ def pico_info_handler(
     """For ID_PICO_INFO_HANDLER messages"""
     out: typing.List = []
 
-    out.append("board_id=")
-    out.append(hostname.get_board_id_hex())
-    out.append("\n")
+    if (request_data_buffer != b"") or (input_parameter != 0):
+        return (b"", PICO_ERROR_INVALID_ARG)
+
+    def add(key: str, value: str) -> None:
+        out.append(key)
+        out.append("=")
+        out.append(value)
+        out.append("\n")
+
+    add("board_id", hostname.get_board_id_hex())
+    add("name", hostname.get_hostname())
+    add("ip", connection.get_ip())
+    add("wifi_settings_version", configuration.WIFI_SETTINGS_VERSION_STRING)
+    add("micropython", "1")
 
     return ("".join(out).encode(), 0)
 
@@ -41,6 +56,20 @@ def update_handler(
         input_parameter: int,
         arg: typing.Any) -> typing.Tuple[bytes, int]:
     """For ID_UPDATE_HANDLER messages"""
+
+    if input_parameter != 0:
+        return (b"", PICO_ERROR_INVALID_ARG)
+
+    # Rewrite the settings file
+    try:
+        with open(configuration.WIFI_SETTINGS_FILE_NAME, "wb") as fd:
+            fd.write(request_data_buffer)
+    except Exception:
+        return (b"", PICO_ERROR_INVALID_DATA)
+
+    # Update information loaded from the file
+    remote.update_secret()
+    hostname.set_hostname()
     return (b"", 0)
 
 def update_reboot_handler1(
@@ -49,7 +78,7 @@ def update_reboot_handler1(
         input_parameter: int,
         arg: typing.Any) -> typing.Tuple[bytes, int]:
     """For ID_UPDATE_REBOOT_HANDLER messages (stage 1)"""
-    return (b"", 0)
+    return update_handler(msg_type, request_data_buffer, input_parameter, arg)
 
 def update_reboot_handler2(
         msg_type: int,
@@ -57,3 +86,6 @@ def update_reboot_handler2(
         return_value: int,
         arg: typing.Any) -> None:
     """For ID_UPDATE_REBOOT_HANDLER messages (stage 2)"""
+    # This part will actually do the reboot if there is no error from stage 1
+    if return_value == 0:
+        machine.reset()

@@ -442,8 +442,10 @@ def init(enable_remote_access: bool = True) -> None:
         raise NotImplementedError() from None
 
     # Country code setting - not available for Micropython as WiFi hardware is already initialised
-    # Hostname setting - not so useful for Micropython as netif_set_hostname can't be called
+
+    # Hostname
     hostname.set_hostname()
+    network.hostname(hostname.get_hostname())
 
     # State initialised - we can scan immediately because hardware was already initialised by Micropython
     g_wifi_state.connect_timeout_time = __make_timeout_time_ms(configuration.CONNECT_TIMEOUT_TIME_MS)
