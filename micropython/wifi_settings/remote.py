@@ -320,22 +320,23 @@ class Session:
                 print("BadHandlerError: {} not in table at end".format(handler_id))
             return
 
-        self.data = b""
-        result = 0
+        # Default to send to callback2 if callback1 is not set
+        result = parameter
 
         callback1 = g_handler_table[handler_id].callback1
         if callback1:
             # call first handler
-            print("callback1:", msg_type, self.data[:data_size], parameter)
+            if DEBUG_HANDLERS:
+                print("Calling [{}].callback1 with {}".format(msg_type, (self.data[:data_size], parameter)))
             try:
                 return_value = callback1(msg_type, self.data[:data_size], parameter, g_handler_table[handler_id].arg)
             except Exception as e:
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
-                print("callback1:", e)
                 if DEBUG_HANDLERS:
                     print("BadHandlerError: callback1 exception {}".format(e))
                 return
-            print("callback1:", return_value)
+            if DEBUG_HANDLERS:
+                print("Result [{}].callback1 with return {}".format(msg_type, return_value))
 
             # expect a return like (reply_data_buffer, return_value)
             if ((type(return_value) != tuple)
@@ -344,7 +345,7 @@ class Session:
             or (type(return_value[1]) != int)):
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
                 if DEBUG_HANDLERS:
-                    print("BadHandlerError: callback1 return {}".format(return_value))
+                    print("BadHandlerError: callback1 unexpected return type {}".format(return_value))
                 return
             self.data = return_value[0]
             result = return_value[1]
@@ -353,15 +354,14 @@ class Session:
             if len(self.data) > MAX_DATA_SIZE:
                 self.data = self.data[:MAX_DATA_SIZE]
 
-            reply_data_size = len(self.data)
-
+        reply_data_size = len(self.data)
         self.data_index = 0
 
         if g_handler_table[handler_id].callback2:
             # prepare to call the second handler; no data will be sent via the network,
             # but it will be available for callback2. The request header is repacked with
             # new information to be used by callback2.
-            self.request_header = __pack_header(reply_data_size, result, ID_OK)
+            self.request_header = __pack_header(reply_data_size, result, msg_type)
             self.state = ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2
             reply_data_size = 0
         else:
@@ -587,14 +587,16 @@ class Session:
                 return
 
             # Load the result from running callback1
-            (_, result, msg_type, _) = __unpack_header(self.request_header)
+            (data_size, result, msg_type, _) = __unpack_header(self.request_header)
             handler_id = msg_type - ID_FIRST_HANDLER
 
             if handler_id in g_handler_table:
                 callback2 = g_handler_table[handler_id].callback2
                 if callback2:
+                    if DEBUG_HANDLERS:
+                        print("Calling [{}].callback2 with {}".format(msg_type, (self.data[:data_size], result)))
                     try:
-                        callback2(msg_type, self.data, result, g_handler_table[handler_id].arg)
+                        callback2(msg_type, self.data[:data_size], result, g_handler_table[handler_id].arg)
                     except Exception as e:
                         if DEBUG_HANDLERS:
                             print("BadHandlerError: callback2 exception {}".format(e))
