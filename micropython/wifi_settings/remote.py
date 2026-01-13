@@ -190,16 +190,16 @@ class Session:
         raw_key = self.generate_authentication(b"CK")
         self.decrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
 
-    def generate_enc_data_hash(self, header: bytes) -> bytes:
+    def generate_enc_data_hash(self, header: bytes, data: bytes) -> bytes:
         """Generate and return a hash for the reply header and payload (if any).
 
         The first part of the header is hashed, ignoring the data hash bytes at the end.
-        All payload data is hashed.
+        All provided data is hashed.
         The first DATA_HASH_SIZE bytes of the SHA-256 are returned.
         """
         h1 = hashlib.sha256()
         h1.update(header[:HEADER_DATA_HASH_OFFSET])
-        h1.update(self.data)    # Note: data size expected to match header.data_size
+        h1.update(data)
         return h1.digest()[:DATA_HASH_SIZE]
 
     def generate_enc_header_for_error(self, msg_type: int) -> None:
@@ -208,7 +208,7 @@ class Session:
 
         # Only the msg_type and data_hash fields are used - everything else is 0
         self.reply_header = __pack_header(0, 0, msg_type, self.generate_enc_data_hash(
-                                __pack_header(0, 0, msg_type)))
+                                __pack_header(0, 0, msg_type), b""))
 
         # Encrypt
         self.output_block = self.encrypt.encrypt(self.reply_header)
@@ -304,13 +304,13 @@ class Session:
         i.e. verify integrity, call a handler, prepare to send reply data."""
 
         # Check data hash is correct
-        expect_hash = self.generate_enc_data_hash(self.request_header)
+        (data_size, parameter, msg_type, _) = __unpack_header(self.request_header)
+        expect_hash = self.generate_enc_data_hash(self.request_header, self.data[:data_size])
         if expect_hash != self.request_header[HEADER_DATA_HASH_OFFSET:]:
             self.state = ReceiveState.SEND_CORRUPT_ERROR
             return
 
         # Process the request, getting new data, data_size, parameter
-        (_, parameter, msg_type, _) = __unpack_header(self.request_header)
         handler_id = msg_type - ID_FIRST_HANDLER
 
         # Check handler is valid (this was already checked, but g_handler_table may have changed)
@@ -326,13 +326,16 @@ class Session:
         callback1 = g_handler_table[handler_id].callback1
         if callback1:
             # call first handler
+            print("callback1:", msg_type, self.data[:data_size], parameter)
             try:
-                return_value = callback1(msg_type, self.data, parameter, g_handler_table[handler_id].arg)
+                return_value = callback1(msg_type, self.data[:data_size], parameter, g_handler_table[handler_id].arg)
             except Exception as e:
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+                print("callback1:", e)
                 if DEBUG_HANDLERS:
                     print("BadHandlerError: callback1 exception {}".format(e))
                 return
+            print("callback1:", return_value)
 
             # expect a return like (reply_data_buffer, return_value)
             if ((type(return_value) != tuple)
@@ -349,10 +352,8 @@ class Session:
             # Limit data size as the C implementation does
             if len(self.data) > MAX_DATA_SIZE:
                 self.data = self.data[:MAX_DATA_SIZE]
-            # Pad data if necessary
-            pad = AES_BLOCK_SIZE - (len(self.data) % AES_BLOCK_SIZE)
-            if pad > 0:
-                self.data += b"\x00" * pad
+
+            reply_data_size = len(self.data)
 
         self.data_index = 0
 
@@ -360,17 +361,22 @@ class Session:
             # prepare to call the second handler; no data will be sent via the network,
             # but it will be available for callback2. The request header is repacked with
             # new information to be used by callback2.
-            self.request_header = __pack_header(len(self.data), result, ID_OK)
+            self.request_header = __pack_header(reply_data_size, result, ID_OK)
             self.state = ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2
             reply_data_size = 0
         else:
             # no second handler, return data
             self.state = ReceiveState.SEND_ENC_REPLY_HEADER
-            reply_data_size = len(self.data)
 
         # Generate reply header
         self.reply_header = __pack_header(reply_data_size, result, ID_OK,
-            self.generate_enc_data_hash(__pack_header(reply_data_size, result, ID_OK)))
+            self.generate_enc_data_hash(__pack_header(reply_data_size, result, ID_OK),
+                                        self.data[:reply_data_size]))
+
+        # Pad data if necessary before transmitting
+        pad = AES_BLOCK_SIZE - (len(self.data) % AES_BLOCK_SIZE)
+        if AES_BLOCK_SIZE > pad > 0:
+            self.data += b"\x00" * pad
 
     def handle_enc_request_start(self) -> None:
         """Process the start of an encrypted request,

@@ -70,7 +70,7 @@ def update_handler(
     # Update information loaded from the file
     remote.update_secret()
     hostname.set_hostname()
-    return (b"", 0)
+    return (b"", len(request_data_buffer))
 
 def update_reboot_handler1(
         msg_type: int,
@@ -78,7 +78,11 @@ def update_reboot_handler1(
         input_parameter: int,
         arg: typing.Any) -> typing.Tuple[bytes, int]:
     """For ID_UPDATE_REBOOT_HANDLER messages (stage 1)"""
-    return update_handler(msg_type, request_data_buffer, input_parameter, arg)
+    return_value = update_handler(msg_type, request_data_buffer, input_parameter, arg)
+    if return_value[1] == len(request_data_buffer):
+        return (b"", 0) # success
+    else:
+        return return_value
 
 def update_reboot_handler2(
         msg_type: int,
