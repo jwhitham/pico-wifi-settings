@@ -142,7 +142,7 @@ g_remote_socket: typing.Optional[socket.socket] = None
 g_responder_socket: typing.Optional[socket.socket] = None
 
 class Session:
-    data: bytes = b"" # MAX_DATA_SIZE
+    data: bytearray # MAX_DATA_SIZE
     client_challenge: bytes = b"" # CHALLENGE_SIZE
     server_challenge: bytes = b"" # CHALLENGE_SIZE
     output_block: bytes = b"" # AES_BLOCK_SIZE
@@ -153,10 +153,13 @@ class Session:
     request_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
     state: int = ReceiveState.SEND_GREETING
     data_index: int = 0
+    data_size: int = 0
 
     def __init__(self) -> None:
-        """Set up a greeting."""
-        self.data = g_remote_service_greeting
+        """Allocate memory to support one connection - set up a greeting."""
+        self.data = bytearray(MAX_DATA_SIZE)
+        self.data_size = len(g_remote_service_greeting)
+        self.data[:self.data_size] = g_remote_service_greeting
         self.state = ReceiveState.SEND_GREETING
 
     def generate_authentication(self, append_code: bytes) -> bytes:
@@ -228,7 +231,7 @@ class Session:
             # (self.data contains a greeting message)
             self.output_block = self.data[self.data_index : self.data_index + AES_BLOCK_SIZE]
             self.data_index += AES_BLOCK_SIZE
-            if self.data_index >= len(self.data):
+            if self.data_index >= self.data_size:
                 self.state = ReceiveState.EXPECT_REQUEST
         elif self.state == ReceiveState.EXPECT_REQUEST:
             # Second message, client to server. Client sends the client challenge.
@@ -276,7 +279,7 @@ class Session:
         elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER:
             # Encrypted stage. Send reply header to the client.
             self.output_block = self.encrypt.encrypt(self.reply_header)
-            if len(self.data) == 0:
+            if self.data_size == 0:
                 # Header only - no payload
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
             else:
@@ -286,7 +289,7 @@ class Session:
             self.output_block = self.encrypt.encrypt(
                     self.data[self.data_index : self.data_index + AES_BLOCK_SIZE])
             self.data_index += AES_BLOCK_SIZE
-            if self.data_index >= len(self.data):
+            if self.data_index >= self.data_size:
                 # Finished
                 self.state = ReceiveState.EXPECT_ENC_REQUEST_HEADER
         elif self.state == ReceiveState.SEND_ENC_REPLY_HEADER_WITH_CALLBACK2:
@@ -304,16 +307,17 @@ class Session:
         i.e. verify integrity, call a handler, prepare to send reply data."""
 
         # Check data hash is correct
-        (data_size, parameter, msg_type, _) = __unpack_header(self.request_header)
-        expect_hash = self.generate_enc_data_hash(self.request_header, self.data[:data_size])
+        request_data_size = self.data_size
+        expect_hash = self.generate_enc_data_hash(self.request_header, self.data[:request_data_size])
         if expect_hash != self.request_header[HEADER_DATA_HASH_OFFSET:]:
             self.state = ReceiveState.SEND_CORRUPT_ERROR
             return
 
-        # Process the request, getting new data, data_size, parameter
-        handler_id = msg_type - ID_FIRST_HANDLER
+        # Process the request, getting new data and parameter
+        (_, parameter, msg_type, _) = __unpack_header(self.request_header)
 
         # Check handler is valid (this was already checked, but g_handler_table may have changed)
+        handler_id = msg_type - ID_FIRST_HANDLER
         if handler_id not in g_handler_table:
             self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
             if DEBUG_HANDLERS:
@@ -321,15 +325,18 @@ class Session:
             return
 
         # Default to send to callback2 if callback1 is not set
+        reply_data_size = request_data_size
         result = parameter
 
-        callback1 = g_handler_table[handler_id].callback1
-        if callback1:
+        handler = g_handler_table[handler_id]
+        if handler.callback1:
             # call first handler
             if DEBUG_HANDLERS:
-                print("Calling [{}].callback1 with {}".format(msg_type, (self.data[:data_size], parameter)))
+                print("Calling [{}].callback1 with {}".format(msg_type, (self.data[:request_data_size], parameter)))
             try:
-                return_value = callback1(msg_type, self.data[:data_size], parameter, g_handler_table[handler_id].arg)
+                # Call parameters: (msg_type, data_buffer, input_data_size, input_parameter, arg)
+                # Return value: (reply_data_size, return_value)
+                return_value = handler.callback1(msg_type, self.data, request_data_size, parameter, handler.arg)
             except Exception as e:
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
                 if DEBUG_HANDLERS:
@@ -338,23 +345,21 @@ class Session:
             if DEBUG_HANDLERS:
                 print("Result [{}].callback1 with return {}".format(msg_type, return_value))
 
-            # expect a return like (reply_data_buffer, return_value)
+            # expect return value: (reply_data_size, return_value)
             if ((type(return_value) != tuple)
             or (len(return_value) != 2)
-            or (type(return_value[0]) != bytes)
+            or (type(return_value[0]) != int)
             or (type(return_value[1]) != int)):
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
                 if DEBUG_HANDLERS:
                     print("BadHandlerError: callback1 unexpected return type {}".format(return_value))
                 return
-            self.data = return_value[0]
-            result = return_value[1]
+            (reply_data_size, result) = return_value
 
             # Limit data size as the C implementation does
-            if len(self.data) > MAX_DATA_SIZE:
-                self.data = self.data[:MAX_DATA_SIZE]
+            reply_data_size = min(MAX_DATA_SIZE, max(0, reply_data_size))
+            self.data_size = reply_data_size
 
-        reply_data_size = len(self.data)
         self.data_index = 0
 
         if g_handler_table[handler_id].callback2:
@@ -369,14 +374,9 @@ class Session:
             self.state = ReceiveState.SEND_ENC_REPLY_HEADER
 
         # Generate reply header
-        self.reply_header = __pack_header(reply_data_size, result, ID_OK,
+        self.output_header = __pack_header(reply_data_size, result, ID_OK,
             self.generate_enc_data_hash(__pack_header(reply_data_size, result, ID_OK),
                                         self.data[:reply_data_size]))
-
-        # Pad data if necessary before transmitting
-        pad = AES_BLOCK_SIZE - (len(self.data) % AES_BLOCK_SIZE)
-        if AES_BLOCK_SIZE > pad > 0:
-            self.data += b"\x00" * pad
 
     def handle_enc_request_start(self) -> None:
         """Process the start of an encrypted request,
@@ -405,7 +405,7 @@ class Session:
             return
 
         # Prepare for receiving the request payload
-        self.data = b""
+        self.data_size = data_size
         if data_size == 0:
             # There is no payload - go direct to the end
             self.handle_enc_request_end()
@@ -416,8 +416,7 @@ class Session:
     def handle_enc_request_add_data(self) -> None:
         """Process data input for an encrypted request."""
         self.data += self.decrypt.decrypt(self.input_block[:AES_BLOCK_SIZE])
-        (data_size, _, _, _) = __unpack_header(self.request_header)
-        if len(self.data) >= data_size:
+        if len(self.data) >= self.data_size:
             # No more blocks
             self.handle_enc_request_end()
 
@@ -587,16 +586,19 @@ class Session:
                 return
 
             # Load the result from running callback1
-            (data_size, result, msg_type, _) = __unpack_header(self.request_header)
+            (_, result, msg_type, _) = __unpack_header(self.request_header)
+            output_data_size = self.data_size
             handler_id = msg_type - ID_FIRST_HANDLER
 
             if handler_id in g_handler_table:
-                callback2 = g_handler_table[handler_id].callback2
-                if callback2:
+                handler = g_handler_table[handler_id]
+                if handler.callback2:
                     if DEBUG_HANDLERS:
-                        print("Calling [{}].callback2 with {}".format(msg_type, (self.data[:data_size], result)))
+                        print("Calling [{}].callback2 with {}".format(msg_type, (self.data[:output_data_size], result)))
                     try:
-                        callback2(msg_type, self.data[:data_size], result, g_handler_table[handler_id].arg)
+                        # Call parameters: (msg_type, data_buffer, output_data_size, return_value, arg)
+                        # Return value: None
+                        handler.callback2(msg_type, self.data, output_data_size, result, handler.arg)
                     except Exception as e:
                         if DEBUG_HANDLERS:
                             print("BadHandlerError: callback2 exception {}".format(e))
@@ -661,23 +663,26 @@ def set_handler(
 
     The user sends a (network) message containing a msg_type, some data (perhaps 0 bytes)
     and a parameter (int32_t) - all of these are received, decrypted (AES-256),
-    and integrity checked (SHA-256) before the handler is invoked with
-    (msg_type, request_data_buffer, input_parameter, arg) parameters, where
-        msg_type is the first parameter of set_handler
-        request_data_buffer is a bytes() buffer of size 0 to MAX_DATA_SIZE inclusive
+    and integrity checked (SHA-256) before the handler is invoked with the
+    following parameters:
+        (msg_type, data_buffer, input_data_size, input_parameter, arg)
+    where
+        msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER to
+            ID_LAST_USER_HANDLER inclusive, matching the first parameter of set_handler
+        data_buffer is a bytearray() buffer of size MAX_DATA_SIZE
             containing data received from the client (e.g. remote_picotool)
+        input_data_size is the number of bytes in data_buffer which are valid for input,
+            i.e. a value in range 0 to MAX_DATA_SIZE inclusive
         input_parameter is a 32-bit signed integer value received from the client
         arg is the third parameter of set_handler
 
-    The callback function should return a tuple:
-        (reply_data_buffer, return_value)
+    The callback function can make changes to data_buffer in order to reply with data.
+    It should return a tuple:
+        (output_data_size, return_value)
     where
-        reply_data_buffer is a bytes() buffer of size 0 to MAX_DATA_SIZE inclusive
-            containing data to be sent to the client
+        output_data_size is the number of bytes in data_buffer which are valid for output,
+            i.e. a value in range 0 to MAX_DATA_SIZE inclusive
         return_value is a 32-bit signed integer value to be sent to the client
-
-    msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER ..
-    ID_LAST_USER_HANDLER inclusive.
     """
     set_two_stage_handler(msg_type, callback1, None, arg)
 
@@ -694,12 +699,13 @@ def set_two_stage_handler(
     After callback1 returns, the return value from callback1 is sent to the
     client but no data is sent. The connection is then closed, and callback2
     is called with the following parameters:
-        (msg_type, reply_data_buffer, return_value, arg)
+        (msg_type, data_buffer, output_data_size, return_value, arg)
     where
-        msg_type is the first parameter of set_two_stage_handler
-        reply_data_buffer is the first tuple element returned by callback1
-        return_value is the second tuple element returned by callback1
-            (this value has also been sent to the client)
+        msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER to
+            ID_LAST_USER_HANDLER inclusive, matching the first parameter of set_two_stage_handler
+        output_data_size is the first value returned by callback1; it is the number of bytes
+            in data_buffer which are valid
+        return_value is the second value returned by callback1 (this value has also been sent to the client)
         arg is the fourth parameter of set_two_stage_handler
 
     This second handler cannot return a value or any data. The purpose of two-part

@@ -16,25 +16,29 @@ PICO_ERROR_INVALID_DATA = -16
 # Type-checking
 try:
     import typing
-    HandlerCallback1 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any],
-                                       typing.Tuple[bytes, int]]]
-    # (msg_type, request_data_buffer, input_parameter, arg) -> (reply_data_buffer, return_value)
-    HandlerCallback2 = typing.Optional[typing.Callable[[int, bytes, int, typing.Any], None]]
-    # (msg_type, reply_data_buffer, return_value, arg) -> None
+    # Callback 1:
+    # Call parameters: (msg_type, data_buffer, input_data_size, input_parameter, arg)
+    # Return value: (output_data_size, return_value)
+    HandlerCallback1 = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], typing.Tuple[int, int]]]
+    # Callback 2:
+    # Call parameters: (msg_type, data_buffer, output_data_size, return_value, arg)
+    # Return value: None
+    HandlerCallback2 = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], None]]
 except ImportError:
     pass
 
 
 def pico_info_handler(
         msg_type: int,
-        request_data_buffer: bytes,
+        data_buffer: bytearray,
+        input_data_size: int,
         input_parameter: int,
-        arg: typing.Any) -> typing.Tuple[bytes, int]:
+        arg: typing.Any) -> typing.Tuple[int, int]:
     """For ID_PICO_INFO_HANDLER messages"""
     out: typing.List = []
 
-    if (request_data_buffer != b"") or (input_parameter != 0):
-        return (b"", PICO_ERROR_INVALID_ARG)
+    if (input_data_size != 0) or (input_parameter != 0):
+        return (0, PICO_ERROR_INVALID_ARG)
 
     def add(key: str, value: str) -> None:
         out.append(key)
@@ -48,35 +52,40 @@ def pico_info_handler(
     add("wifi_settings_version", configuration.WIFI_SETTINGS_VERSION_STRING)
     add("micropython", "1")
 
-    return ("".join(out).encode(), 0)
+    out_bytes = "".join(out).encode()
+    out_size = min(len(data_buffer), len(out_bytes))
+    data_buffer[:out_size] = out_bytes
+    return (out_size, 0)
 
 def update_handler(
         msg_type: int,
-        request_data_buffer: bytes,
+        data_buffer: bytearray,
+        input_data_size: int,
         input_parameter: int,
-        arg: typing.Any) -> typing.Tuple[bytes, int]:
+        arg: typing.Any) -> typing.Tuple[int, int]:
     """For ID_UPDATE_HANDLER messages"""
 
     if input_parameter != 0:
-        return (b"", PICO_ERROR_INVALID_ARG)
+        return (0, PICO_ERROR_INVALID_ARG)
 
     # Rewrite the settings file
     try:
         with open(configuration.WIFI_SETTINGS_FILE_NAME, "wb") as fd:
-            fd.write(request_data_buffer)
+            fd.write(data_buffer[:input_data_size])
     except Exception:
-        return (b"", PICO_ERROR_INVALID_DATA)
+        return (0, PICO_ERROR_INVALID_DATA)
 
     # Update information loaded from the file
     remote.update_secret()
     hostname.set_hostname()
-    return (b"", len(request_data_buffer))
+    return (input_data_size, input_data_size)
 
 def update_reboot_handler1(
         msg_type: int,
-        request_data_buffer: bytes,
+        data_buffer: bytearray,
+        input_data_size: int,
         input_parameter: int,
-        arg: typing.Any) -> typing.Tuple[bytes, int]:
+        arg: typing.Any) -> typing.Tuple[int, int]:
     """For ID_UPDATE_REBOOT_HANDLER messages (stage 1)"""
     return_value = update_handler(msg_type, request_data_buffer, input_parameter, arg)
     if return_value[1] == len(request_data_buffer):
