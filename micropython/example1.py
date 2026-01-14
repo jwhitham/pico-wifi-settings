@@ -7,6 +7,25 @@ print("Init")
 wifi_settings.init()
 print("Connect")
 wifi_settings.connect()
+
+def test_handler(msg_type, data_buffer, input_data_size, input_parameter, arg):
+
+    if -input_parameter != input_data_size:
+        return (0, 1)
+
+    assert arg == 1234
+    print("Test size", input_data_size)
+    value = -10
+    for i in range(input_data_size):
+        if data_buffer[i] == 0x41:
+            value -= 1
+        data_buffer[i] ^= 0xac
+
+    return (input_data_size, value)
+
+ID_USER = wifi_settings.ID_FIRST_USER_HANDLER
+wifi_settings.set_handler(ID_USER, test_handler, 1234)
+
 try:
     ip1 = "X"
     while True:

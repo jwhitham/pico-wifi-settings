@@ -1,20 +1,18 @@
+"""Decrypt a remote_picotool data stream given the correct update_secret.
 
-# Wireshark: Analyze -> Follow -> TCP Stream
-# Choose Entire conversation (... bytes)
-# Choose Show data as: Hex Dump
-# Click Save as... -> text file
+To obtain a suitable dump file, use Wireshark to record all network traffic.
+Find a packet from the TCP stream used by the remote_picotool tool protocol.
+Then open the menu: Analyze -> Follow -> TCP Stream
+Choose Entire conversation (... bytes)
+Choose Show data as: Hex Dump
+Click Save as... -> text file
 
-# Expected format similar to:
-#     00000000  46 01 05 0d 37 44 34 37  44 46 37 33 41 37 41 33   F...7D47 DF73A7A3
-#     00000010  33 42 43 37 0d 6d 69 63  72 6f 70 79 74 68 6f 6e   3BC7.mic ropython
-#     00000020  20 70 69 63 6f 2d 77 69  66 69 2d 73 65 74 74 69    pico-wi fi-setti
-#     00000030  6e 67 73 20 76 65 72 73  69 6f 6e 20 30 2e 33 2e   ngs vers ion 0.3.
-#     00000040  31 0d 0a 00 00 00 00 00  00 00 00 00 00 00 00 00   1....... ........
-# 00000000  47 b4 ce b1 d9 f0 80 aa  99 2f b4 fa 37 99 47 08   G....... ./..7.G.
-# ....
-# Every line is always 16 bytes because this is the AES_BLOCK_SIZE
+Note: remote_picotool's protocol doesn't provide perfect forward secrecy, i.e. it's
+possible to recover all data from a network packet recording if the update_secret
+is known. This program does exactly that.
+"""
 
-import hashlib, hmac, struct, typing
+import hashlib, hmac, struct, typing, argparse, pathlib, sys
 import pyaes # type: ignore
 
 import remote_picotool
@@ -25,7 +23,7 @@ HEADER_STRUCT = "<IiB7s"
 HEADER_DATA_HASH_OFFSET = BLOCK_SIZE - remote_picotool.DATA_HASH_SIZE
 MAX_DATA_SIZE = 4096
 
-def decoder(secret_bytes: bytes, conversation: typing.IO) -> None:
+def decoder(secret_hash: bytes, conversation: typing.IO) -> None:
     # Split up the lines in the conversation
     server_to_client = b""
     client_to_server = b""
@@ -38,11 +36,6 @@ def decoder(secret_bytes: bytes, conversation: typing.IO) -> None:
         else:
             client_to_server += data
             
-    # Compute the secret hash
-    secret_hash = b"\x00" * 32
-    for i in range(4096):
-        secret_hash = hashlib.sha256(secret_hash + secret_bytes).digest()
-
     # Skip the greeting
     assert server_to_client[0] == remote_picotool.ID_GREETING
     assert server_to_client[1] == remote_picotool.PROTOCOL_VERSION
@@ -75,7 +68,11 @@ def decoder(secret_bytes: bytes, conversation: typing.IO) -> None:
     def gen_auth(session_data: bytes) -> bytes:
         return hmac.HMAC(key=secret_hash, msg=session_data, digestmod=hashlib.sha256).digest()
 
-    assert client_auth_expect == gen_auth(client_challenge + server_challenge + b"CA")[:BLOCK_SIZE - 1]
+    if client_auth_expect != gen_auth(client_challenge + server_challenge + b"CA")[:BLOCK_SIZE - 1]:
+        print("Error: the update_secret used by streamdump.py does not match the one used for the recording")
+        print("Do you need a different --secret?")
+        sys.exit(1)
+
     assert server_auth_expect == gen_auth(client_challenge + server_challenge + b"SA")[:BLOCK_SIZE - 1]
 
     # Set up encryption
@@ -109,7 +106,7 @@ def decoder(secret_bytes: bytes, conversation: typing.IO) -> None:
             data = client_transmit.decrypt(client_to_server[:BLOCK_SIZE])
             client_to_server = client_to_server[BLOCK_SIZE:]
 
-            print("   Request", data.hex(" "), repr(data))
+            print("   >>", data.hex(" "), repr(data))
             check_request_hash.update(data[:min(BLOCK_SIZE, request_data_size)])
             request_data_size -= BLOCK_SIZE
 
@@ -139,7 +136,7 @@ def decoder(secret_bytes: bytes, conversation: typing.IO) -> None:
             data = server_transmit.decrypt(server_to_client[:BLOCK_SIZE])
             server_to_client = server_to_client[BLOCK_SIZE:]
 
-            print("   Reply", data.hex(" "), repr(data))
+            print("   <<", data.hex(" "), repr(data))
             check_reply_hash.update(data[:min(BLOCK_SIZE, reply_data_size)])
             reply_data_size -= BLOCK_SIZE
 
@@ -148,6 +145,16 @@ def decoder(secret_bytes: bytes, conversation: typing.IO) -> None:
             print("   Reply data hash is ok")
         else:
             print("   Reply data hash is bad, calculated as", reply_hash_expect.hex())
+        print()
 
 if __name__ == "__main__":
-    decoder(b"funkytown", open("/tmp/tt.txt", "rt"))
+    parser = argparse.ArgumentParser("streamdump",
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    remote_picotool.RemotePicotoolCfg.add_config_options(parser)
+    parser.add_argument("dump_file",
+        type=pathlib.Path,
+        help="Dump file of TCP stream from Wireshark")
+
+    args = parser.parse_args(sys.argv[1:] or ["--help"])
+    config = remote_picotool.RemotePicotoolCfg(args)
+    decoder(config.update_secret_hash, open(args.dump_file, "rt"))
