@@ -345,7 +345,7 @@ class Session:
             if DEBUG_HANDLERS:
                 print("Result [{}].callback1 with return {}".format(msg_type, return_value))
 
-            # expect return value: (reply_data_size, return_value)
+            # expect return value: (output_data_size, result_value)
             if ((type(return_value) != tuple)
             or (len(return_value) != 2)
             or (type(return_value[0]) != int)
