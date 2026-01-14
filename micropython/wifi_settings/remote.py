@@ -335,7 +335,7 @@ class Session:
                 print("Calling [{}].callback1 with {}".format(msg_type, (self.data[:request_data_size], parameter)))
             try:
                 # Call parameters: (msg_type, data_buffer, input_data_size, input_parameter, arg)
-                # Return value: (reply_data_size, return_value)
+                # Return value: (output_data_size, result_value)
                 return_value = handler.callback1(msg_type, self.data, request_data_size, parameter, handler.arg)
             except Exception as e:
                 self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
@@ -678,11 +678,11 @@ def set_handler(
 
     The callback function can make changes to data_buffer in order to reply with data.
     It should return a tuple:
-        (output_data_size, return_value)
+        (output_data_size, result_value)
     where
         output_data_size is the number of bytes in data_buffer which are valid for output,
             i.e. a value in range 0 to MAX_DATA_SIZE inclusive
-        return_value is a 32-bit signed integer value to be sent to the client
+        result_value is a 32-bit signed integer value to be sent to the client
     """
     set_two_stage_handler(msg_type, callback1, None, arg)
 
@@ -695,24 +695,26 @@ def set_two_stage_handler(
     """Register stage 1 and stage2 callback functions to handle remote messages of the specified type.
 
     See set_handler for a description of callback1.
-    
-    After callback1 returns, the return value from callback1 is sent to the
-    client but no data is sent. The connection is then closed, and callback2
-    is called with the following parameters:
-        (msg_type, data_buffer, output_data_size, return_value, arg)
+   
+    If a two-stage handler is registered for msg_type, then the behaviour is as follows:
+    1. callback1 is called as for a single-stage handler
+    2. the return value from callback1 is sent to the client but no data is sent, even if output_data_size != 0
+    3. the connection is closed
+    4. then, callback2 is called with the following parameters:
+        (msg_type, data_buffer, output_data_size, result_value, arg)
     where
         msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER to
             ID_LAST_USER_HANDLER inclusive, matching the first parameter of set_two_stage_handler
         output_data_size is the first value returned by callback1; it is the number of bytes
-            in data_buffer which are valid
-        return_value is the second value returned by callback1 (this value has also been sent to the client)
+            in data_buffer which are valid when callback2 is reached
+        result_value is the second value returned by callback1 (this is also sent to the client)
         arg is the fourth parameter of set_two_stage_handler
 
     This second handler cannot return a value or any data. The purpose of two-part
     handlers is to support requests that put the Pico offline (e.g. reboot) as these
     have to be acknowledged before they are executed. Usually the first part will be
     used for validation, returning a non-zero value if validation fails, and then the second
-    part will check the return_value from the first, and proceed
+    part will check the result_value from the first, and proceed
     only if validation was ok.
 
     msg_type identifies the handler and must be in range ID_FIRST_USER_HANDLER ..

@@ -18,10 +18,10 @@ try:
     import typing
     # Callback 1:
     # Call parameters: (msg_type, data_buffer, input_data_size, input_parameter, arg)
-    # Return value: (output_data_size, return_value)
+    # Return value: (output_data_size, result_value)
     HandlerCallback1 = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], typing.Tuple[int, int]]]
     # Callback 2:
-    # Call parameters: (msg_type, data_buffer, output_data_size, return_value, arg)
+    # Call parameters: (msg_type, data_buffer, output_data_size, result_value, arg)
     # Return value: None
     HandlerCallback2 = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], None]]
 except ImportError:
@@ -78,7 +78,7 @@ def update_handler(
     # Update information loaded from the file
     remote.update_secret()
     hostname.set_hostname()
-    return (input_data_size, input_data_size)
+    return (0, input_data_size)
 
 def update_reboot_handler1(
         msg_type: int,
@@ -87,18 +87,19 @@ def update_reboot_handler1(
         input_parameter: int,
         arg: typing.Any) -> typing.Tuple[int, int]:
     """For ID_UPDATE_REBOOT_HANDLER messages (stage 1)"""
-    return_value = update_handler(msg_type, request_data_buffer, input_parameter, arg)
-    if return_value[1] == len(request_data_buffer):
-        return (b"", 0) # success
+    return_value = update_handler(msg_type, data_buffer, input_data_size, input_parameter, arg)
+    if (0, input_data_size) == return_value:
+        return (0, 0) # success - go to stage 2
     else:
         return return_value
 
 def update_reboot_handler2(
         msg_type: int,
-        reply_data_buffer: bytes,
-        return_value: int,
+        data_buffer: bytearray,
+        output_data_size: int,
+        result_value: int,
         arg: typing.Any) -> None:
     """For ID_UPDATE_REBOOT_HANDLER messages (stage 2)"""
     # This part will actually do the reboot if there is no error from stage 1
-    if return_value == 0:
+    if (output_data_size == 0) and (result_value == 0):
         machine.reset()
