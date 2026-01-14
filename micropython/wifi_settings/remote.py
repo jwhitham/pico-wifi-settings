@@ -68,7 +68,7 @@ HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
 PROTOCOL_VERSION = 1
 AES_IV = ZERO_BLOCK = b"\x00" * AES_BLOCK_SIZE
 PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
-DEBUG_HANDLERS = True
+DEBUG_HANDLERS = False
 
 # Magic number for CBC mode
 # see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
@@ -374,7 +374,7 @@ class Session:
             self.state = ReceiveState.SEND_ENC_REPLY_HEADER
 
         # Generate reply header
-        self.output_header = __pack_header(reply_data_size, result, ID_OK,
+        self.reply_header = __pack_header(reply_data_size, result, ID_OK,
             self.generate_enc_data_hash(__pack_header(reply_data_size, result, ID_OK),
                                         self.data[:reply_data_size]))
 
@@ -406,6 +406,7 @@ class Session:
 
         # Prepare for receiving the request payload
         self.data_size = data_size
+        self.data_index = 0
         if data_size == 0:
             # There is no payload - go direct to the end
             self.handle_enc_request_end()
@@ -415,8 +416,9 @@ class Session:
 
     def handle_enc_request_add_data(self) -> None:
         """Process data input for an encrypted request."""
-        self.data += self.decrypt.decrypt(self.input_block[:AES_BLOCK_SIZE])
-        if len(self.data) >= self.data_size:
+        self.data[self.data_index : self.data_index + AES_BLOCK_SIZE] = self.decrypt.decrypt(self.input_block[:AES_BLOCK_SIZE])
+        self.data_index += AES_BLOCK_SIZE
+        if self.data_index >= self.data_size:
             # No more blocks
             self.handle_enc_request_end()
 
