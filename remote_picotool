@@ -404,10 +404,12 @@ class AbstractCommunication:
 
         return (msg_type, result_data, result_value)
 
-    async def transmit(self, msg_type: int, request_data: bytes, parameter: int) -> None:
+    async def transmit(self, msg_type: int, request_data: typing.Union[bytes, bytearray], parameter: int) -> None:
         """Transmit an encrypted message to the other side."""
 
         assert self.enc_transmit is not None
+        if isinstance(request_data, bytearray):
+            request_data = bytes(request_data)
 
         # Send header
         header = struct.pack("<IiB", len(request_data), parameter, msg_type)
@@ -490,7 +492,7 @@ class Client(AbstractCommunication):
         # Validation is on the other side
         pass
 
-    async def run(self, handler_id: int, request_data: bytes = b"",
+    async def run(self, handler_id: int, request_data: typing.Union[bytes, bytearray] = b"",
                   parameter: int = 0) -> typing.Tuple[bytes, int]:
         """Run client."""
         assert handler_id >= ID_FIRST_HANDLER

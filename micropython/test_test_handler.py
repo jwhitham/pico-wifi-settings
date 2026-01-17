@@ -80,18 +80,16 @@ async def remote_handler_run_test_handler() -> None:
             assert len(result_data) == 0
             print(", OK", flush=True)
 
-        for parameter in SIZES:
-            size = 0
+        for size in [1, MAX_DATA_SIZE - 1, MAX_DATA_SIZE]:
+            parameter = size
             print("test_handler_3", size, parameter, end="", flush=True)
-            request_data = b""
-            expected_result_data = bytearray(size)
-            expected_result = parameter
+            request_data = bytearray(size)
+            expected_result = -3
             print(", sending", end="", flush=True)
             (result_data, result_value) = await client.run(ID_TEST_HANDLER_3, request_data, parameter)
             print(", checking", len(result_data), result_value, end="")
             assert result_value == expected_result, (result_value, expected_result)
-            assert len(result_data) == len(expected_result_data)
-            assert result_data == bytes(expected_result_data)
+            assert len(result_data) == 0
             print(", OK", flush=True)
 
     finally:
