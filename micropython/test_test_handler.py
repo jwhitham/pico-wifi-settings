@@ -46,7 +46,7 @@ async def remote_handler_run_test_handler() -> None:
             assert size <= MAX_DATA_SIZE
             parameter = -size
             print("test_handler_1", size, parameter, end="", flush=True)
-            request_data = os.urandom(size)
+            request_data = bytearray(os.urandom(size))
             expected_result_data = bytearray(size)
             expected_result = -10
             for i in range(size):
@@ -67,7 +67,7 @@ async def remote_handler_run_test_handler() -> None:
             size = 0
             print("test_handler_2", size, parameter, end="", flush=True)
             expected_result = parameter ^ 1
-            request_data = b""
+            request_data = bytearray(0)
             if parameter < 0:
                 expected_result_data = bytearray(0)
             elif parameter < MAX_DATA_SIZE:
@@ -99,7 +99,7 @@ async def remote_handler_run_test_handler() -> None:
         }.items():
             size = 0
             print("test_handler_3", size, parameter, end="", flush=True)
-            request_data = b""
+            request_data = bytearray(0)
             print(", sending", end="", flush=True)
             (result_data, result_value) = await client.run(ID_TEST_HANDLER_3, request_data, parameter)
             print(", checking", len(result_data), result_value, end="")
