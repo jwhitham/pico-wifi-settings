@@ -9,6 +9,7 @@
 
 from . import hostname, connection, configuration, remote
 import machine # type: ignore
+import sys
 
 PICO_ERROR_INVALID_ARG = -5
 PICO_ERROR_INVALID_DATA = -16
@@ -40,18 +41,27 @@ def pico_info_handler(
     if (input_data_size != 0) or (input_parameter != 0):
         return (0, PICO_ERROR_INVALID_ARG)
 
-    def add(key: str, value: str) -> None:
+    def add(key: str, value: typing.Union[str, int]) -> None:
         out.append(key)
         out.append("=")
-        out.append(value)
+        out.append(str(value))
         out.append("\n")
 
+    # board id
     add("board_id", hostname.get_board_id_hex())
+
+    # network info
     add("name", hostname.get_hostname())
     add("ip", connection.get_ip())
-    add("wifi_settings_version", configuration.WIFI_SETTINGS_VERSION_STRING)
-    add("micropython", "1")
 
+    # program info
+    add("wifi_settings_version", configuration.WIFI_SETTINGS_VERSION_STRING)
+    add("id_last_user_handler", remote.ID_LAST_USER_HANDLER)
+    add("max_data_size", remote.MAX_DATA_SIZE)
+    add("implementation", "MicroPython")
+    add("sdk_version", sys.version)
+
+    # Output
     out_bytes = "".join(out).encode()
     out_size = min(len(data_buffer), len(out_bytes))
     data_buffer[:out_size] = out_bytes
