@@ -13,6 +13,7 @@ import struct
 
 import cryptolib  # type: ignore
 from . import hostname, configuration, remote_handlers, storage
+from . import remote_file_io
 
 # Type-checking
 try:
@@ -52,12 +53,12 @@ ID_CORRUPT_ERROR =          83      # s->c
 ID_UNKNOWN_ERROR =          84      # s->c
 ID_PICO_INFO_HANDLER =      120
 ID_UPDATE_HANDLER =         121
-ID_READ_HANDLER =           122
-ID_RESERVED_3 =             123
+ID_READ_HANDLER =           122     # C only
+ID_FILE_IO_HANDLER =        123     # MicroPython only
 ID_UPDATE_REBOOT_HANDLER =  124
-ID_FLASH_WRITE_HANDLER =    125
+ID_FLASH_WRITE_HANDLER =    125     # C only
 ID_RESERVED_6 =             126
-ID_OTA_FIRMWARE_UPDATE_HANDLER = 127
+ID_OTA_FIRMWARE_UPDATE_HANDLER = 127        # C only
 ID_FIRST_USER_HANDLER =     128
 ID_LAST_USER_HANDLER =      143
 
@@ -796,6 +797,7 @@ def init() -> None:
             ID_UPDATE_REBOOT_HANDLER,
             remote_handlers.update_reboot_handler1,
             remote_handlers.update_reboot_handler2, None)
+    set_handler(ID_FILE_IO_HANDLER, remote_file_io.file_io_handler, None)
 
 def listen(ip_address: str) -> None:
     """Bind TCP socket for remote service."""

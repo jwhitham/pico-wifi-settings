@@ -7,6 +7,12 @@ ID_TEST_HANDLER_2 = remote_picotool.ID_FIRST_USER_HANDLER + 2
 ID_TEST_HANDLER_3 = remote_picotool.ID_FIRST_USER_HANDLER + 3
 INT_MIN = -0x80000000
 INT_MAX = 0x7fffffff
+FILE_IO_CMD_STRUCT = "<HBB"
+FILE_IO_CMD_STRUCT_SIZE = 4
+FILE_IO_CMD_GET_FILE_SIZE = 1
+FILE_IO_CMD_READ_FROM_FILE = 2
+FILE_IO_ERROR_INVALID_SIZE = -1
+FILE_IO_ERROR_INVALID_COMMAND = -2
 
 
 async def remote_handler_run_test_handler() -> None:
@@ -121,6 +127,13 @@ async def remote_handler_run_test_handler() -> None:
             assert result_value == expected_result, (result_value, expected_result)
             assert len(result_data) == 0
             print(", OK", flush=True)
+
+        # Test - file handler
+        print("Test file handler", flush=True)
+        file_io = remote_picotool.RemoteFileIO(client, pico_info)
+        size = await file_io.get_file_size("/example1.py")
+        print(size)
+        assert size > 0
 
         print("Tests ok")
     finally:

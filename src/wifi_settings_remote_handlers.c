@@ -174,7 +174,6 @@ int32_t wifi_settings_pico_info_handler(
     // program info
     add_pico_info_string(&buf, "wifi_settings_version", WIFI_SETTINGS_VERSION_STRING);
     add_pico_info_u32(&buf, "id_last_user_handler", ID_LAST_USER_HANDLER);
-    add_pico_info_u32(&buf, "max_data_size", MAX_DATA_SIZE);
     add_pico_info_string(&buf, "implementation", "C");
     add_pico_info_string(&buf, "program",
         binary_info_get_string_for_id(BINARY_INFO_ID_RP_PROGRAM_NAME));

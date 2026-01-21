@@ -55,12 +55,12 @@ ID_CORRUPT_ERROR =          83      # s->c
 ID_UNKNOWN_ERROR =          84      # s->c
 ID_PICO_INFO_HANDLER =      120
 ID_UPDATE_HANDLER =         121
-ID_READ_HANDLER =           122
-ID_RESERVED_3 =             123
+ID_READ_HANDLER =           122     # C only
+ID_FILE_IO_HANDLER =        123     # MicroPython only
 ID_UPDATE_REBOOT_HANDLER =  124
-ID_FLASH_WRITE_HANDLER =    125
+ID_FLASH_WRITE_HANDLER =    125     # C only
 ID_RESERVED_6 =             126
-ID_OTA_FIRMWARE_UPDATE_HANDLER = 127
+ID_OTA_FIRMWARE_UPDATE_HANDLER = 127        # C only
 ID_FIRST_USER_HANDLER =     128
 ID_LAST_USER_HANDLER =      143
 
@@ -98,6 +98,14 @@ PROTOCOL_VERSION = 1
 AES_IV = b"\x00" * AES_BLOCK_SIZE
 PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
 
+FILE_IO_CMD_STRUCT = "<HBB"
+FILE_IO_CMD_STRUCT_SIZE = 4
+FILE_IO_CMD_GET_FILE_SIZE = 1
+FILE_IO_CMD_READ_FROM_FILE = 2
+FILE_IO_ERROR_INVALID_SIZE = -1
+FILE_IO_ERROR_INVALID_COMMAND = -2
+FILE_IO_ERROR_FILE_NAME_UNICODE_ERROR = -3
+
 FlashRange = typing.Tuple[int, int]
 
 try:
@@ -121,6 +129,10 @@ class RemoteError(Exception):
 
 class LocalError(Exception):
     """Base for all errors relating to local issues e.g. incorrect parameters."""
+    pass
+
+class TooLargeError(LocalError):
+    """The requested data size is too large due to the MAX_DATA_SIZE limit on the remote."""
     pass
 
 class PicoError(RemoteError):
@@ -518,6 +530,87 @@ class Client(AbstractCommunication):
             raise BadParameterError()
         else:
             raise UnknownError()
+
+class RemoteFileIO:
+    def __init__(self, client: Client, pico_info: "PicoInfo") -> None:
+        self.client = client
+        self.max_data_size = pico_info.max_data_size
+
+    def build_request_header(self, cmd: int, file_name: str,
+                    result_data_size: int = 0) -> bytes:
+        # file name must be encoded to UTF-8 in order to be sent
+        # and the file name size must fit in one byte
+        file_name_bytes = file_name.encode()
+        file_name_size = len(file_name_bytes)
+
+        # basic validity checks on the provided data
+        if (file_name_size > 0xff) or (file_name_size <= 0):
+            raise LocalError("file name is not valid")
+        if (cmd > 0xff) or (cmd <= 0):
+            raise LocalError("cmd is not valid")
+        if result_data_size < 0:
+            raise LocalError("result_data_size is not valid")
+
+        # check the result size
+        if result_data_size > self.max_data_size:
+            raise TooLargeError("MAX_DATA_SIZE would be exceeded when receiving")
+
+        # determine the maximum possible size for request data
+        max_request_size = (self.max_data_size - file_name_size
+                            - FILE_IO_CMD_STRUCT_SIZE)
+
+        return struct.pack(FILE_IO_CMD_STRUCT, result_data_size,
+                    file_name_size, cmd) + file_name_bytes
+
+    def get_max_request_size(self, file_name: str) -> int:
+        """Get the maximum possible size for a request on a particular file."""
+        return self.max_data_size - len(self.build_request_header(0, file_name, 0))
+
+    def get_max_result_size(self) -> int:
+        """Get the maximum possible size for a result."""
+        return self.max_data_size
+
+    async def command(self, cmd: int, file_name: str, request_data: bytes = b"", offset: int = 0, result_data_size: int = 0) -> bytes:
+        """Run a file I/O command on the remote side."""
+
+        # Add header to request_data
+        request_data = self.build_request_header(cmd, file_name, result_data_size) + request_data
+        if len(request_data) > self.max_data_size:
+            raise TooLargeError("MAX_DATA_SIZE would be exceeded when sending")
+
+        # run the handler on the remote
+        try:
+            (result_data, result_value) = await self.client.run(ID_FILE_IO_HANDLER,
+                request_data=request_data, parameter=offset)
+        except BadHandlerError:
+            raise RemoteError("file_io handler error") from None
+
+        # convert the return code to an error if required
+        if result_value > 0:
+            # These are errors from a system call i.e. errno
+            if result_value == 2:
+                raise FileNotFoundError(file_name)
+            raise RemoteError(os.strerror(result_value))
+        if result_value < 0:
+            if result_value == FILE_IO_ERROR_FILE_NAME_UNICODE_ERROR:
+                # This should not happen as the UTF-8 encoding ought to be valid
+                raise RemoteError("unable to decode filename UTF-8 on remote")
+            if result_value == FILE_IO_ERROR_INVALID_SIZE:
+                # This should not happen as the size is checked before sending it
+                raise RemoteError("size error reported by remote side")
+            if result_value == FILE_IO_ERROR_INVALID_COMMAND:
+                # This might happen if the requested command is not known
+                raise RemoteError("invalid file IO command")
+            # These are unknown errors from the handler
+            raise RemoteError("file IO error " + str(result_value))
+
+        return result_data
+
+    async def get_file_size(self, file_name: str) -> int:
+        result_data = await self.command(FILE_IO_CMD_GET_FILE_SIZE, file_name)
+        if len(result_data) != 4:
+            raise RemoteError("expected exactly 4 bytes")
+        return struct.unpack("<I", result_data)[0]
 
 class KeyValueStore:
     """Represents a key=value store such as the wifi-settings file.

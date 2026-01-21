@@ -113,3 +113,4 @@ def update_reboot_handler2(
     # This part will actually do the reboot if there is no error from stage 1
     if (output_data_size == 0) and (result_value == 0):
         machine.reset()
+
