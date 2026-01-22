@@ -68,7 +68,6 @@ HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
 
 PROTOCOL_VERSION = 1
 AES_IV = ZERO_BLOCK = b"\x00" * AES_BLOCK_SIZE
-PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
 DEBUG_HANDLERS = False
 
 # Magic number for CBC mode
@@ -144,24 +143,27 @@ g_responder_socket: typing.Optional[socket.socket] = None
 
 class Session:
     data: bytearray # MAX_DATA_SIZE
-    client_challenge: bytes = b"" # CHALLENGE_SIZE
-    server_challenge: bytes = b"" # CHALLENGE_SIZE
-    output_block: bytes = b"" # AES_BLOCK_SIZE
-    input_block: bytes = b"" # AES_BLOCK_SIZE
+    client_challenge: bytes # CHALLENGE_SIZE
+    server_challenge: bytes # CHALLENGE_SIZE
+    output_block: bytes # AES_BLOCK_SIZE
+    input_block: bytes # AES_BLOCK_SIZE
     decrypt: cryptolib.aes
     encrypt: cryptolib.aes
-    reply_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    request_header: bytes = ZERO_BLOCK # AES_BLOCK_SIZE
-    state: int = ReceiveState.SEND_GREETING
-    data_index: int = 0
-    data_size: int = 0
+    reply_header: bytes # AES_BLOCK_SIZE
+    request_header: bytes # AES_BLOCK_SIZE
+    state: int
+    data_index: int
+    data_size: int
 
     def __init__(self) -> None:
         """Allocate memory to support one connection - set up a greeting."""
         self.data = bytearray(MAX_DATA_SIZE)
         self.data_size = len(g_remote_service_greeting)
+        self.data_index = 0
         self.data[:self.data_size] = g_remote_service_greeting
         self.state = ReceiveState.SEND_GREETING
+        self.input_block = b""
+        self.output_block = b""
 
     def generate_authentication(self, append_code: bytes) -> bytes:
         """Compute HMAC-SHA256. This can be done using the hmac module
