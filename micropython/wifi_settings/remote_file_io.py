@@ -59,16 +59,15 @@ def file_io_handler(
             with open(file_name, "rb") as fd:
                 # seek to the end to get the size
                 fd.seek(0, 2)
+                file_size = fd.tell()
                 output_data_size = 4
-                data_buffer[:output_data_size] = struct.pack("<I", fd.tell())
+                data_buffer[:output_data_size] = struct.pack("<I", file_size)
 
         elif cmd == FILE_IO_CMD_READ_FROM_FILE:
             with open(file_name, "rb") as fd:
+                # read up to output_data_size bytes starting at offset
                 fd.seek(offset, 0)
-                # attempt to read request_data_size bytes starting at offset
-                data_buffer[0:request_data_size] = fd.read(request_data_size)
-                # determine how many bytes were actually read
-                output_data_size = fd.tell() - offset
+                output_data_size = fd.readinto(data_buffer)
         else:
             # invalid command
             result_value = FILE_IO_ERROR_INVALID_COMMAND

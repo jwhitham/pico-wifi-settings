@@ -607,10 +607,31 @@ class RemoteFileIO:
         return result_data
 
     async def get_file_size(self, file_name: str) -> int:
-        result_data = await self.command(FILE_IO_CMD_GET_FILE_SIZE, file_name)
+        """Determine the size of a file on the remote."""
+        result_data = await self.command(
+                cmd=FILE_IO_CMD_GET_FILE_SIZE,
+                file_name=file_name)
         if len(result_data) != 4:
             raise RemoteError("expected exactly 4 bytes")
         return struct.unpack("<I", result_data)[0]
+
+    async def read_bytes(self, file_name: str) -> bytes:
+        """Read the contents of a file on the remote."""
+        block_size = self.get_max_result_size()
+        offset = 0
+        output: typing.List[bytes] = []
+        read_ok = True
+        while read_ok:
+            result_data = await self.command(
+                    cmd=FILE_IO_CMD_READ_FROM_FILE,
+                    file_name=file_name,
+                    result_data_size=block_size,
+                    offset=offset)
+            output.append(result_data)
+            offset += len(result_data)
+            read_ok = (len(result_data) >= block_size)
+
+        return b"".join(output)
 
 class KeyValueStore:
     """Represents a key=value store such as the wifi-settings file.

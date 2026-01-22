@@ -343,6 +343,13 @@ class Session:
                 if DEBUG_HANDLERS:
                     print("BadHandlerError: callback1 exception {}".format(e))
                 return
+
+            if len(self.data) != MAX_DATA_SIZE:
+                self.state = ReceiveState.SEND_BAD_HANDLER_ERROR
+                if DEBUG_HANDLERS:
+                    print("BadHandlerError: callback1 changed the data buffer size")
+                return
+
             if DEBUG_HANDLERS:
                 print("Result [{}].callback1 with return {}".format(msg_type, return_value))
 

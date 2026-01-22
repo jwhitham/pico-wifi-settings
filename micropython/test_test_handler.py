@@ -1,6 +1,7 @@
 import asyncio
 import os
 import remote_picotool
+from pathlib import Path
 
 ID_TEST_HANDLER_1 = remote_picotool.ID_FIRST_USER_HANDLER + 1
 ID_TEST_HANDLER_2 = remote_picotool.ID_FIRST_USER_HANDLER + 2
@@ -129,11 +130,41 @@ async def remote_handler_run_test_handler() -> None:
             print(", OK", flush=True)
 
         # Test - file handler
-        print("Test file handler", flush=True)
         file_io = remote_picotool.RemoteFileIO(client, pico_info)
-        size = await file_io.get_file_size("/example1.py")
-        print(size)
-        assert size > 0
+        for test_file_name in [
+                "wifi_settings/__init__.py",
+                "wifi_settings/configuration.py",
+                "wifi_settings/remote.py",
+        ]:
+            test_data = Path(test_file_name).read_bytes()
+
+            print("Test file size command", len(test_data), flush=True)
+            size = await file_io.get_file_size(test_file_name)
+            assert size == len(test_data)
+
+            print("Test file read command", len(test_data), flush=True)
+            data = await file_io.read_bytes(test_file_name)
+            open("received.bin", "wb").write(data)
+            assert len(data) == len(test_data)
+            assert data == test_data
+
+        # Test request for unknown file
+        print("Test unknown file", flush=True)
+        test_missing_file_name = "/FILE_DOES_NOT_EXIST"
+        ok = False
+        try:
+            size = await file_io.get_file_size(test_missing_file_name)
+        except FileNotFoundError:
+            ok = True
+        assert ok
+
+        # Test request for unknown file
+        ok = False
+        try:
+            data = await file_io.read_bytes(test_missing_file_name)
+        except FileNotFoundError:
+            ok = True
+        assert ok
 
         print("Tests ok")
     finally:
