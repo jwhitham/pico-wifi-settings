@@ -33,8 +33,6 @@ CMake build options control whether remote update features are enabled:
    allow you to replace all of the Pico software "over the air" (OTA)
    without any physical access to the hardware.
 
-There are [Bazel equivalents](/doc/BAZEL.md) of these options for Bazel projects.
-
 # Update Secret
 
 `update_secret` is a "shared secret" stored in the WiFi settings file and

@@ -31,8 +31,7 @@ static uint32_t setup_stack[0x8000];
 
 int main() {
     stdio_init_all();
-    // Multicore is used in this app because (1) it's enabled by default with Bazel,
-    // and (2) this is an example of flash_safe_execute:
+    // Multicore is used in this app: this is an example of flash_safe_execute:
     if(!flash_safe_execute_core_init()) {
         panic("unable to put core 0 into safe state");
     }

@@ -169,17 +169,3 @@ looks like this:
     make
 ```
 
-# Building from source with Bazel
-
-See the [Bazel instructions](/doc/BAZEL.md) for more details. A typical build step
-for Pico 2 W looks like this:
-```
-    bazel build --platforms=@pico-sdk//bazel/platform:rp2350 \
-        --@pico-sdk//bazel/config:PICO_BOARD=pico2_w  \
-        --@pico-sdk//bazel/config:PICO_LWIP_CONFIG=//setup:setup_lwipopts \
-        --@pico-sdk//bazel/config:PICO_STDIO_USB=1 \
-        --//bazel/config:WIFI_SETTINGS_REMOTE=2 \
-        --aspects @pico-sdk//tools:uf2_aspect.bzl%pico_uf2_aspect \
-        --output_groups=+pico_uf2_files \
-        //setup:setup
-```

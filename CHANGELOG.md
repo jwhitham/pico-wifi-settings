@@ -2,6 +2,10 @@
 
 This documents important changes in the project.
 
+## v0.3.2
+
+- Remove Bazel to simplify maintenance
+
 ## v0.3.1
 
 - Fix a bug affecting OTA updates when user code has enabled the watchdog due to the long
