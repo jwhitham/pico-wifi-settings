@@ -15,5 +15,14 @@ SPDX-License-Identifier: BSD-3-Clause
 """
 
 if __name__ == "__main__":
-    from .aio.remote_picotool_main import main
-    main()
+    if not __package__:
+        # Invoked as "python remote_picotool"
+        from pathlib import Path
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from remote_picotool.aio.remote_picotool_main import main
+        main()
+    else:
+        # Invoked as "python -m remote_picotool"
+        from .aio.remote_picotool_main import main
+        main()
