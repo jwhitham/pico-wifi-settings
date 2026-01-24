@@ -8,11 +8,11 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-import typing
+from . import typing_shim as typing
 
 END_OF_LINE_BYTES = b"\r\n\x00\xff\x1b"
 
-FlashRange = typing.Tuple[int, int]
+FlashRange: typing.TypeAlias = "typing.Tuple[int, int]"
 
 class KeyValueStore:
     """Represents a key=value store such as the wifi-settings file.
