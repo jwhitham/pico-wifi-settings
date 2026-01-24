@@ -10,8 +10,9 @@ from ..exceptions import *
 from ..remote_picotool_cfg import RemotePicotoolCfg
 
 import asyncio 
-import typing
+import re
 import socket
+import typing
 
 RESPONDER_REQUEST_MAGIC =  b"PWS?"
 RESPONDER_REPLY_MAGIC =    b"PWS:"

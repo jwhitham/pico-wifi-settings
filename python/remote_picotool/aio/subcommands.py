@@ -10,10 +10,40 @@ from ..handler_ids import *
 from ..exceptions import *
 from .client import Client
 from ..pico_info import PicoInfo
-from ..remote_picotol_cfg import RemotePicotolCfg
+from ..remote_picotool_cfg import RemotePicotoolCfg
+from .file_reader import do_load, PICO_ERROR_NOT_PERMITTED
+from ..file_type import get_file_type, FileType, MAX_WIFI_SETTINGS_FILE_SIZE
+from .client_connect import get_pico_connection
+from .board_id import get_list_of_boards_for_board_id
 
 import argparse
+import asyncio
+import enum
+import struct
 import typing
+
+# structures for ID_READ_HANDLER
+# struct wifi_settings_logical_range_t {
+#    void* start_address;
+#    uint32_t size;
+# };
+# struct read_parameter_t {
+#    wifi_settings_logical_range_t copy_from;
+# };
+READ_PARAMETER = struct.Struct("<II")
+
+# structures for ID_OTA_FIRMWARE_UPDATE_HANDLER:
+# #define WIFI_SETTINGS_OTA_HASH_SIZE 32
+# struct wifi_settings_flash_range_t {
+#    uint32_t start_address;
+#    uint32_t size;
+# };
+# typedef struct ota_firmware_update_parameter_t {
+#     wifi_settings_flash_range_t copy_from;
+#     wifi_settings_flash_range_t copy_to;
+#     uint8_t hash[WIFI_SETTINGS_OTA_HASH_SIZE];
+# } ota_firmware_update_parameter_t;
+OTA_FIRMWARE_UPDATE_PARAMETER = struct.Struct("<IIII")
 
 def subcommand_info(args: argparse.Namespace) -> None:
     """Print information gathered from a device that is running pico-wifi-settings.""" 

@@ -9,6 +9,9 @@ SPDX-License-Identifier: BSD-3-Clause
 from .exceptions import *
 from .key_value_store import KeyValueStore
 from .update_secret_hash import update_secret_hash
+from .file_type import FileType, get_file_type
+
+from pathlib import Path
 
 import argparse
 import typing

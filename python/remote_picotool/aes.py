@@ -10,7 +10,7 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from abc import abstractmethod
+from . import typing_shim as typing
 
 AES_BLOCK_SIZE = 16
 AES_IV = b"\x00" * AES_BLOCK_SIZE
@@ -19,17 +19,17 @@ class AbstractAES256CBCFactory:
     def __init__(self, key: bytes) -> None:
         pass
 
-    @abstractmethod
     def encrypt(self, block: bytes) -> bytes:
-        return block
+        return AES_IV
 
-    @abstractmethod
     def decrypt(self, block: bytes) -> bytes:
-        return block
+        return AES_IV
+
+AES256CBCFactory: typing.Type[AbstractAES256CBCFactory]
 
 try:
     # Micropython crypto module
-    import cryptolib
+    import cryptolib # type: ignore
 
     class MicropythonAES256CBCFactory(AbstractAES256CBCFactory, cryptolib.aes):
         def __init__(self, key: bytes) -> None:

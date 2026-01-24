@@ -9,11 +9,12 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from .handler_ids import *
-from .exceptions import *
-from ..client import Client
-from .pico_info import PicoInfo
+from ..handler_ids import *
+from ..exceptions import *
+from .client import Client
+from ..pico_info import PicoInfo
 
+import os
 import struct
 import typing
 

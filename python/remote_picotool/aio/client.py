@@ -9,10 +9,11 @@ SPDX-License-Identifier: BSD-3-Clause
 from ..handler_ids import *
 from ..exceptions import *
 from ..version import PROTOCOL_VERSION
-from .aes import AES256CBCFactory
-from .abstract_communication import AsyncioAbstractCommunication
+from ..aes import AES256CBCFactory
+from .abstract_communication import AsyncioAbstractCommunication, CHALLENGE_SIZE, PAD_BLOCK_1
 
 import asyncio 
+import os
 import struct
 import typing
 
