@@ -6,8 +6,8 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from .exceptions import *
-from .remote_picotool_cfg import RemotePicotoolCfg
+from ..exceptions import *
+from ..remote_picotool_cfg import RemotePicotoolCfg
 
 import asyncio 
 import typing

@@ -9,9 +9,9 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from .handler_ids import *
-from .exceptions import *
-from .asyncio_client import Client
+from ..handler_ids import *
+from ..exceptions import *
+from .client import Client
 
 from abc import abstractmethod
 from pathlib import Path

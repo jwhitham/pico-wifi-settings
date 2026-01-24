@@ -6,11 +6,11 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from .handler_ids import *
-from .exceptions import *
-from .version import PROTOCOL_VERSION
+from ..handler_ids import *
+from ..exceptions import *
+from ..version import PROTOCOL_VERSION
 from .aes import AES256CBCFactory
-from .asyncio_abstract_communication import AsyncioAbstractCommunication
+from .abstract_communication import AsyncioAbstractCommunication
 
 import asyncio 
 import struct
