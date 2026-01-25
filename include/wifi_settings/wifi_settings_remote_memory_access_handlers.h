@@ -41,7 +41,7 @@ int32_t wifi_settings_read_handler(
         uint32_t* output_data_size,
         void* arg);
 
-/// @brief for ID_WRITE_FLASH_HANDLER
+/// @brief for ID_FLASH_WRITE_HANDLER
 /// @param[in] input_data_size data to write must be a whole number of Flash sectors
 /// @param[in] input_parameter target Flash address (0 = start of Flash)
 int32_t wifi_settings_write_flash_handler(

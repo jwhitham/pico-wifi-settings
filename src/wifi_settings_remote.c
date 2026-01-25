@@ -91,9 +91,9 @@ typedef enum msg_type_t {
     ID_PICO_INFO_HANDLER =      120,
     ID_UPDATE_HANDLER =         121,
     ID_READ_HANDLER =           122,
-    ID_RESERVED_3 =             123,
+    ID_FILE_IO_HANDLER =        123,
     ID_UPDATE_REBOOT_HANDLER =  124,
-    ID_WRITE_FLASH_HANDLER =    125,
+    ID_FLASH_WRITE_HANDLER =    125,
     ID_RESERVED_6 =             126,
     ID_OTA_FIRMWARE_UPDATE_HANDLER = 127,
     // The rest are available for reuse
@@ -918,7 +918,7 @@ int wifi_settings_remote_init() {
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
     wifi_settings_remote_set_handler(ID_READ_HANDLER,
             wifi_settings_read_handler, NULL);
-    wifi_settings_remote_set_handler(ID_WRITE_FLASH_HANDLER,
+    wifi_settings_remote_set_handler(ID_FLASH_WRITE_HANDLER,
             wifi_settings_write_flash_handler, NULL);
     wifi_settings_remote_set_two_stage_handler(
             ID_OTA_FIRMWARE_UPDATE_HANDLER,
