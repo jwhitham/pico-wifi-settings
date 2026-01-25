@@ -10,17 +10,19 @@ from ..handler_ids import *
 from ..exceptions import *
 from ..version import PROTOCOL_VERSION
 from ..aes import AES256CBCFactory
-from .abstract_communication import AsyncioAbstractCommunication, CHALLENGE_SIZE, PAD_BLOCK_1
+from .abstract_communication import AbstractCommunication
+from ..protocol import CHALLENGE_SIZE, PAD_BLOCK_1
 
 import asyncio 
 import os
 import struct
 import typing
 
-class Client(AsyncioAbstractCommunication):
+class Client(AbstractCommunication):
     """Communications class for client side.
 
-    The public interface of this class is the "run" method - other methods should not be called.
+    The public interface of this class is the "run" method;
+    other methods should not be called.
     """
 
     async def greeting(self) -> None:

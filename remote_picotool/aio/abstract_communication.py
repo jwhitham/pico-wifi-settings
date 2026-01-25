@@ -13,6 +13,9 @@ SPDX-License-Identifier: BSD-3-Clause
 from ..handler_ids import *
 from ..exceptions import *
 from ..aes import AbstractAES256CBCFactory, AES_BLOCK_SIZE
+from ..protocol import CHALLENGE_SIZE, AUTHENTICATION_SIZE
+from ..protocol import DATA_HASH_SIZE, HEADER_SIZE, PAD_BLOCK_1
+from ..protocol import get_pad_bytes
 
 from abc import abstractmethod
 from asyncio import StreamReader, StreamWriter
@@ -23,23 +26,7 @@ import hmac
 import struct
 import typing
 
-CHALLENGE_SIZE =            15
-AUTHENTICATION_SIZE =       15
-DATA_HASH_SIZE =            7
-
-HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
-PAD_BLOCK_1 = b"\x00" * (AES_BLOCK_SIZE - 1)
-
-def get_pad_bytes(data_size: int, block_size: int, pad_byte = b"\x00") -> bytes:
-    """Pad data so that it is a multiple of block_size."""
-    last_block_size = data_size % block_size
-    if last_block_size == 0:
-        return b""
-    pad = block_size - last_block_size
-    return pad_byte * pad
-
-
-class AsyncioAbstractCommunication:
+class AbstractCommunication:
     """Abstract implementation of pico-wifi-settings remote protocol for use with Python asyncio."""
 
     def __init__(self, update_secret_hash: bytes, reader: StreamReader, writer: StreamWriter) -> None:
@@ -239,7 +226,7 @@ class AsyncioAbstractCommunication:
         blocks = [self.enc_transmit.encrypt(clear_block)]
 
         # Pad data to block boundary
-        request_data += get_pad_bytes(len(request_data), AES_BLOCK_SIZE)
+        request_data += get_pad_bytes(len(request_data))
 
         # Add data
         num_blocks = len(request_data) // AES_BLOCK_SIZE
