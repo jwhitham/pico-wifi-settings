@@ -31,7 +31,7 @@ try:
     # Micropython crypto module
     import cryptolib # type: ignore
 
-    class MicropythonAES256CBCFactory(AbstractAES256CBCFactory, cryptolib.aes):
+    class MicropythonAES256CBCFactory(cryptolib.aes, AbstractAES256CBCFactory):
         def __init__(self, key: bytes) -> None:
             # Magic number for CBC mode is 2
             # see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
@@ -44,7 +44,7 @@ except ImportError:
         # pyaes module
         import pyaes # type: ignore
 
-        class PyaesAES256CBCFactory(AbstractAES256CBCFactory, pyaes.aes.AESModeOfOperationCBC):
+        class PyaesAES256CBCFactory(pyaes.aes.AESModeOfOperationCBC, AbstractAES256CBCFactory):
             def __init__(self, key: bytes) -> None:
                 pyaes.aes.AESModeOfOperationCBC.__init__(self, key=key, iv=AES_IV)
 

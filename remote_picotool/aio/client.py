@@ -94,7 +94,7 @@ class Client(AbstractCommunication):
         an exception or a tuple of (result_data, result_value).
         """
         assert handler_id >= ID_FIRST_HANDLER
-        assert handler_id <= 0xff
+        assert handler_id <= ID_LAST_USER_HANDLER
 
         try:
             if self.enc_receive is None:

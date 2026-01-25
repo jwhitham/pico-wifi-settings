@@ -8,8 +8,6 @@
 
 import argparse
 import asyncio
-import os
-import pyaes  # type: ignore
 import struct
 import subprocess
 import sys
@@ -79,7 +77,7 @@ async def create_server(handlers: typing.Dict[int, HandlerCallback]) -> typing.T
         except KeyboardInterrupt:
             server[0].close()
         except Exception as e:
-            print("** TEST SERVER EXCEPTION:", str(e), file=sys.stderr)
+            print("** TEST SERVER EXCEPTION:", repr(e), file=sys.stderr)
             traceback.print_exc()
             print("** END OF EXCEPTION REPORT", file=sys.stderr)
         finally:
@@ -150,7 +148,7 @@ async def test_info() -> None:
     # WHEN
     # Running the client program with the info command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "info", "--raw",
@@ -179,7 +177,7 @@ async def test_wrong_password() -> None:
     # WHEN
     # Running the client program with the info command, but a wrong password
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", "WRONG-PASSWORD", "--address", SERVER_ADDRESS,
             "--port", str(port),
             "info", "--raw",
@@ -207,7 +205,7 @@ async def test_unsupported_command() -> None:
     # WHEN
     # Running the client program with the info command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "info", "--raw",
@@ -333,7 +331,7 @@ max_data_size=0x100
     # WHEN
     # Running the client program with the load command and a specific load offset
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "load", "--offset", "0x12345", str(temp_file),
@@ -374,7 +372,7 @@ max_data_size=0x100
     # WHEN
     # Running the client program with the load command and a specific load offset
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "load", str(TEST1_FILE_PATH),
@@ -417,7 +415,7 @@ async def test_load_uf2_padding() -> None:
     # WHEN
     # Running the client program with the load command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "load", str(TEST1_FILE_PATH),
@@ -465,7 +463,7 @@ max_data_size=0x10000
     # WHEN
     # Running the client program with the OTA command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "ota", str(TEST3_FILE_PATH),
@@ -535,7 +533,7 @@ flash_reusable=0x10000:0x80000
     # WHEN
     # Running the client program with the OTA command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "ota", str(TEST3_FILE_PATH),
@@ -572,7 +570,7 @@ async def test_save(temp_dir) -> None:
     # WHEN
     # Running the client program with the save command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "save", "--range",
@@ -615,7 +613,7 @@ async def test_unsupported_memory_access(temp_dir) -> None:
     # WHEN
     # Running the client program with the save command
     client = await asyncio.create_subprocess_exec(
-            str(REMOTE_PICOTOOL),
+            sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(port),
             "save", str(temp_file),

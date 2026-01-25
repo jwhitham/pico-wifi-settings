@@ -120,11 +120,11 @@ class Server(AbstractCommunication):
 
     def validate(self, msg_type: int, data_size: int, parameter: int) -> None:
         """Raise an exception if the request is invalid."""
-        if msg_type < ID_FIRST_HANDLER:
-            raise BadHandlerError()
+        if (msg_type < ID_FIRST_HANDLER) or (msg_type > ID_LAST_USER_HANDLER):
+            raise BadHandlerError("msg_type = {}".format(msg_type))
         handler = self.handlers.get(msg_type, None)
         if handler is None:
-            raise BadHandlerError()
+            raise BadHandlerError("msg_type = {} - unknown handler".format(msg_type))
 
     async def run(self) -> None:
         """Run server."""
