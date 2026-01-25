@@ -106,17 +106,15 @@ def main() -> None:
 
     # Version (CMake)
     re_cmake_version = re.compile(r'^set.WIFI_SETTINGS_VERSION_STRING "(.+)".*$')
-    cmake_version = ""
+    version = ""
     for line in open(PICO_WIFI_SETTINGS_ROOT_PATH / "CMakeLists.txt", "rt"):
         m = re_cmake_version.match(line)
         if m is not None:
-            cmake_version = m.group(1)
+            version = m.group(1)
             break
         
-    if not cmake_version:
+    if not version:
         raise Exception("Unable to determine library version (CMake)")
-
-    version = cmake_version
 
     # Create output directory
     target_path = PICO_WIFI_SETTINGS_ROOT_PATH / "release"

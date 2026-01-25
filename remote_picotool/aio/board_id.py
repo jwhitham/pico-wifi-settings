@@ -8,6 +8,7 @@ SPDX-License-Identifier: BSD-3-Clause
 
 from ..exceptions import *
 from ..remote_picotool_cfg import RemotePicotoolCfg
+from ..protocol import BOARD_ID_SIZE
 
 import asyncio 
 import re
@@ -16,7 +17,6 @@ import typing
 
 RESPONDER_REQUEST_MAGIC =  b"PWS?"
 RESPONDER_REPLY_MAGIC =    b"PWS:"
-BOARD_ID_SIZE =             8 
 
 async def get_pico_address_for_board_id(
         board_id: typing.Optional[str],

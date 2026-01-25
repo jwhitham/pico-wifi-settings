@@ -11,14 +11,13 @@ from . import typing_shim as typing
 from .key_value_store import KeyValueStore
 from .update_secret_hash import update_secret_hash
 from .file_type import FileType, get_file_type
+from .configuration import PORT_NUMBER, REMOTE_PICOTOOL_CFG_NAME
 
 from pathlib import Path
 
 import argparse
 import os
 
-PORT_NUMBER =               1404
-REMOTE_PICOTOOL_CFG_NAME =  "remote_picotool.cfg"
 
 class RemotePicotoolCfg(KeyValueStore):
     """This represents a remote_picotool configuration, from a file, or parameters, or both."""
