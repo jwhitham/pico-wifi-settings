@@ -10,7 +10,7 @@ SPDX-License-Identifier: BSD-3-Clause
 """
 
 from ..exceptions import *
-from ..remote_picotool_cfg import RemotePicotoolCfg
+from .remote_picotool_cfg import RemotePicotoolCfg
 from . import subcommands
 from .subcommands import UpdateRebootMode
 

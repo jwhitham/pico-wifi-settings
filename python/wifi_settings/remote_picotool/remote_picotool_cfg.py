@@ -6,12 +6,12 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from .exceptions import *
-from . import typing_shim as typing
-from .key_value_store import KeyValueStore
-from .update_secret_hash import update_secret_hash
-from .file_type import FileType, get_file_type
-from .configuration import PORT_NUMBER, REMOTE_PICOTOOL_CFG_NAME
+from ..exceptions import *
+from .. import typing_shim as typing
+from ..key_value_store import KeyValueStore
+from ..update_secret_hash import update_secret_hash
+from ..file_type import FileType, get_file_type
+from ..configuration import PORT_NUMBER, REMOTE_PICOTOOL_CFG_NAME
 
 from pathlib import Path
 

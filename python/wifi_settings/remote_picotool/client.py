@@ -10,7 +10,7 @@ from ..handler_ids import *
 from ..exceptions import *
 from ..version import PROTOCOL_VERSION
 from ..aes import AES256CBCFactory
-from .abstract_communication import AbstractCommunication
+from ..aio.abstract_communication import AbstractCommunication
 from ..protocol import CHALLENGE_SIZE, PAD_BLOCK_1
 
 import asyncio 

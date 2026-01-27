@@ -7,7 +7,7 @@ SPDX-License-Identifier: BSD-3-Clause
 """
 
 from ..exceptions import *
-from ..remote_picotool_cfg import RemotePicotoolCfg
+from .remote_picotool_cfg import RemotePicotoolCfg
 from ..configuration import BOARD_ID_SIZE
 
 import asyncio 

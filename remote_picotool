@@ -13,5 +13,5 @@ if __name__ == "__main__":
     from pathlib import Path
     from sys import path
     path.insert(0, str(Path(__file__).parent / "python"))
-    from wifi_settings.aio.remote_picotool_main import main
+    from wifi_settings.remote_picotool import main
     main()
