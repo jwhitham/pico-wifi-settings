@@ -10,7 +10,7 @@ import re
 import typing
 from pathlib import Path
 
-import remote_picotool
+import wifi_settings
 
 PICO_WIFI_SETTINGS_ROOT_PATH = Path(__file__).parent.parent.parent.absolute()
 RE_DEFINE = re.compile(r"^#define\s+([^\s]*)\s+(\d+).*$") 
@@ -22,10 +22,10 @@ C_ID_FILES = [
     PICO_WIFI_SETTINGS_ROOT_PATH / "src/wifi_settings_remote.c",
 ]
 PYTHON_MODULES = [
-    remote_picotool,
-    remote_picotool.protocol,
-    remote_picotool.version,
-    remote_picotool.configuration, 
+    wifi_settings,
+    wifi_settings.protocol,
+    wifi_settings.version,
+    wifi_settings.configuration, 
 ]
 NOT_REQUIRED_IN_PYTHON = set([
     "AES_KEY_SIZE",

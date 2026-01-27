@@ -19,31 +19,32 @@ from asyncio import StreamReader, StreamWriter
 import pytest
 import re
 
-import remote_picotool
-from remote_picotool import HandlerCallback
+import wifi_settings
+from wifi_settings.aio import HandlerCallback
 
 UPDATE_SECRET = "OWL001"
 SERVER_ADDRESS = "localhost"
 
 TEST_PATH = Path(__file__).parent.absolute()
-REMOTE_PICOTOOL = Path(remote_picotool.__file__).parent
+PICO_WIFI_SETTINGS_ROOT_PATH = TEST_PATH.parent.parent.absolute()
+REMOTE_PICOTOOL = PICO_WIFI_SETTINGS_ROOT_PATH / "remote_picotool"
 
 # Test file 1 contains 2 blocks, intended to be loaded at logical addresses
 # 0x10003100 and 0x10003200
 TEST1_FILE_START_EXPECTED_DATA = b"\x00\xb5\xad\xf6"
 TEST1_FILE_END_EXPECTED_DATA = b"\xba\x6a\xa2\x42"
 TEST1_FILE_PATH = TEST_PATH / "data" / "test1.uf2"
-TEST1_FILE_FAMILY = remote_picotool.Family.RP2350_ARM_S
+TEST1_FILE_FAMILY = wifi_settings.Family.RP2350_ARM_S
 
 # Test file 2 contains 2 blocks, the first is a workaround for RP2350-E10,
 # the second is intended to be loaded at logical address 0x10000000
 TEST2_FILE_PATH = TEST_PATH / "data" / "test2.uf2"
-TEST2_FILE_FAMILY = remote_picotool.Family.RP2350_ARM_S
+TEST2_FILE_FAMILY = wifi_settings.Family.RP2350_ARM_S
 
 # Test file 3 contains blocks from the beginning and end of a real program,
 # the final block ends at Flash location 0x5b100.
 TEST3_FILE_PATH = TEST_PATH / "data" / "test3.uf2"
-TEST3_FILE_FAMILY = remote_picotool.Family.RP2350_ARM_S
+TEST3_FILE_FAMILY = wifi_settings.Family.RP2350_ARM_S
 
 # Raw PicoInfo fields for a Pico 2 W with a program of size 0x1000 already in Flash
 BASIC_PICO_INFO = """
@@ -65,13 +66,13 @@ class FakeRebootError(BaseException):
 
 async def create_server(handlers: typing.Dict[int, HandlerCallback]) -> typing.Tuple[asyncio.base_events.Server, int]:
     server: typing.List[asyncio.Server] = []
-    config = remote_picotool.RemotePicotoolCfg(argparse.Namespace())
+    config = wifi_settings.remote_picotool.RemotePicotoolCfg(argparse.Namespace())
     config.set("update_secret", UPDATE_SECRET)
     update_secret_hash = config.update_secret_hash
 
     async def serve_callback(reader: StreamReader, writer: StreamWriter) -> None:
         try:
-            await remote_picotool.Server(handlers, update_secret_hash, reader, writer).run()
+            await wifi_settings.aio.Server(handlers, update_secret_hash, reader, writer).run()
         except FakeRebootError:
             server[0].close()
         except KeyboardInterrupt:
@@ -141,7 +142,7 @@ async def test_info() -> None:
     # GIVEN
     # Test server that replies to info requests with a hostname 'hello'
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler("name=hello"),
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler("name=hello"),
     }
     (server, port) = await create_server(handlers)
 
@@ -170,7 +171,7 @@ async def test_wrong_password() -> None:
     # GIVEN
     # Test server with a default password
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler(""),
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler(""),
     }
     (server, port) = await create_server(handlers)
 
@@ -230,13 +231,13 @@ def test_get_file_type() -> None:
     # get_file_type is called
     # THEN
     # result is UF2
-    assert remote_picotool.get_file_type(TEST1_FILE_PATH) == remote_picotool.FileType.UF2
+    assert wifi_settings.get_file_type(TEST1_FILE_PATH) == wifi_settings.FileType.UF2
 
 def test_uf2_reader() -> None:
     # GIVEN
     # UF2 reader: file containing some blocks for Pico 2 W, and a FileReader object
-    pico_info = remote_picotool.PicoInfo(BASIC_PICO_INFO.encode("utf-8"))
-    reader = remote_picotool.UF2FileReader(pico_info, TEST1_FILE_FAMILY)
+    pico_info = wifi_settings.PicoInfo(BASIC_PICO_INFO.encode("utf-8"))
+    reader = wifi_settings.remote_picotool.UF2FileReader(pico_info, TEST1_FILE_FAMILY)
 
     # WHEN
     # The file is read
@@ -254,9 +255,9 @@ def test_uf2_reader_with_align() -> None:
     # GIVEN
     # UF2 reader: the PicoInfo provides a sector size and logical offset
     # Override the sector size to 0x200
-    pico_info = remote_picotool.PicoInfo(
+    pico_info = wifi_settings.PicoInfo(
         ("flash_sector_size=0x200\n" + BASIC_PICO_INFO).encode("utf-8"))
-    reader = remote_picotool.UF2FileReader(pico_info, TEST1_FILE_FAMILY)
+    reader = wifi_settings.remote_picotool.UF2FileReader(pico_info, TEST1_FILE_FAMILY)
 
     # WHEN
     # The file is read
@@ -276,12 +277,12 @@ def test_uf2_reader_with_align() -> None:
 def test_uf2_reader_wrong_family() -> None:
     # GIVEN
     # UF2 reader: wrong family selected
-    pico_info = remote_picotool.PicoInfo(BASIC_PICO_INFO.encode("utf-8"))
-    reader = remote_picotool.UF2FileReader(pico_info, remote_picotool.Family.RP2040)
+    pico_info = wifi_settings.PicoInfo(BASIC_PICO_INFO.encode("utf-8"))
+    reader = wifi_settings.remote_picotool.UF2FileReader(pico_info, wifi_settings.Family.RP2040)
 
     # WHEN
     # The file is read
-    with pytest.raises(remote_picotool.LocalError) as e:
+    with pytest.raises(wifi_settings.LocalError) as e:
         reader.read(TEST1_FILE_PATH)
 
     # THEN
@@ -291,8 +292,8 @@ def test_uf2_reader_wrong_family() -> None:
 def test_uf2_reader_skip_rp2350_e10_workaround() -> None:
     # GIVEN
     # UF2 reader given a file which begins with a workaround for RP2350-E10
-    pico_info = remote_picotool.PicoInfo(BASIC_PICO_INFO.encode("utf-8"))
-    reader = remote_picotool.UF2FileReader(pico_info, TEST2_FILE_FAMILY)
+    pico_info = wifi_settings.PicoInfo(BASIC_PICO_INFO.encode("utf-8"))
+    reader = wifi_settings.remote_picotool.UF2FileReader(pico_info, TEST2_FILE_FAMILY)
 
     # WHEN
     # The file is read
@@ -319,12 +320,12 @@ async def test_load_binary(temp_dir) -> None:
     temp_file.write_bytes(test_data)
     writes: typing.List[typing.Tuple[int, bytes]] = []
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
 flash_sector_size=0x100
 flash_reusable=0x10000:0x20000
 max_data_size=0x100
 """ + BASIC_PICO_INFO),
-        remote_picotool.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
+        wifi_settings.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
     }
     (server, port) = await create_server(handlers)
 
@@ -361,11 +362,11 @@ async def test_load_uf2() -> None:
     # PicoInfo structure representing Pico 2
     writes: typing.List[typing.Tuple[int, bytes]] = []
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
 flash_sector_size=0x100
 max_data_size=0x100
 """ + BASIC_PICO_INFO),
-        remote_picotool.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
+        wifi_settings.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
     }
     (server, port) = await create_server(handlers)
 
@@ -407,8 +408,8 @@ async def test_load_uf2_padding() -> None:
     # typical PicoInfo structure for Pico 2 W
     writes: typing.List[typing.Tuple[int, bytes]] = []
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler(BASIC_PICO_INFO),
-        remote_picotool.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler(BASIC_PICO_INFO),
+        wifi_settings.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
     }
     (server, port) = await create_server(handlers)
 
@@ -451,12 +452,12 @@ async def test_ota() -> None:
     writes: typing.List[typing.Tuple[int, bytes]] = []
     ota_calls: typing.List[bytes] = []
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
 flash_reusable=0x80000:0xe0000
 max_data_size=0x10000
 """ + BASIC_PICO_INFO),
-        remote_picotool.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
-        remote_picotool.ID_OTA_FIRMWARE_UPDATE_HANDLER: OTAHandler(ota_calls),
+        wifi_settings.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
+        wifi_settings.ID_OTA_FIRMWARE_UPDATE_HANDLER: OTAHandler(ota_calls),
     }
     (server, port) = await create_server(handlers)
 
@@ -522,11 +523,11 @@ async def test_without_enough_space() -> None:
     writes: typing.List[typing.Tuple[int, bytes]] = []
     ota_calls: typing.List[bytes] = []
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler("""
 flash_reusable=0x10000:0x80000
 """ + BASIC_PICO_INFO),
-        remote_picotool.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
-        remote_picotool.ID_OTA_FIRMWARE_UPDATE_HANDLER: OTAHandler(ota_calls),
+        wifi_settings.ID_FLASH_WRITE_HANDLER: WriteHandler(writes),
+        wifi_settings.ID_OTA_FIRMWARE_UPDATE_HANDLER: OTAHandler(ota_calls),
     }
     (server, port) = await create_server(handlers)
 
@@ -558,9 +559,9 @@ async def test_save(temp_dir) -> None:
     temp_file = temp_dir / "tmp.bin"
     block_size = 0x1000
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler(
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler(
             f"max_data_size=0x{block_size:x}\n" + BASIC_PICO_INFO),
-        remote_picotool.ID_READ_HANDLER: ReadHandler(),
+        wifi_settings.ID_READ_HANDLER: ReadHandler(),
     }
     num_blocks = 9
     start_address = 0x87654321
@@ -606,7 +607,7 @@ async def test_unsupported_memory_access(temp_dir) -> None:
     # Test server that does not allow remote memory accesses
     temp_file = temp_dir / "tmp.bin"
     handlers: typing.Dict[int, HandlerCallback] = {
-        remote_picotool.ID_PICO_INFO_HANDLER: PicoInfoHandler(BASIC_PICO_INFO),
+        wifi_settings.ID_PICO_INFO_HANDLER: PicoInfoHandler(BASIC_PICO_INFO),
     }
     (server, port) = await create_server(handlers)
 
