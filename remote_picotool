@@ -1,0 +1,17 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2026 Jack Whitham
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Remote update client for wifi-settings. Pico firmware built with the wifi-settings
+# library, an 'update_secret' and the -DWIFI_SETTINGS_REMOTE build option can be
+# remotely updated using this program. Run with --help for instructions,
+# or visit https://github.com/jwhitham/pico-wifi-settings
+#
+if __name__ == "__main__":
+    from pathlib import Path
+    from sys import path
+    path.insert(0, str(Path(__file__).parent / "python"))
+    from wifi_settings.remote_picotool import main
+    main()

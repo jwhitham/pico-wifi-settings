@@ -9,7 +9,7 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from ..remote_picotool_cfg import RemotePicotoolCfg
+from .remote_picotool_cfg import RemotePicotoolCfg
 from .board_id import get_pico_address_for_board_id
 
 from asyncio import StreamReader, StreamWriter

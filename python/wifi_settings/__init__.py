@@ -16,11 +16,10 @@ SPDX-License-Identifier: BSD-3-Clause
 from .exceptions import *
 from .handler_ids import *
 from .pico_info import Family, PicoInfo
-from .remote_picotool_cfg import RemotePicotoolCfg
 from .file_type import get_file_type, FileType
 
 try:
     import micropython as __testing_only__  # type: ignore
 except ImportError:
     # Not Micropython
-    from .aio import *
+    from . import aio, remote_picotool

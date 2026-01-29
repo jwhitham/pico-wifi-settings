@@ -8,7 +8,8 @@
 # 
 #
 
-from . import storage, configuration, hostname, remote
+from .. import configuration
+from . import storage, hostname, remote
 
 # Type-checking
 try:

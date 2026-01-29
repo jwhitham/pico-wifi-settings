@@ -10,7 +10,7 @@ from ..handler_ids import *
 from ..exceptions import *
 from .client import Client
 from ..pico_info import PicoInfo
-from ..remote_picotool_cfg import RemotePicotoolCfg
+from .remote_picotool_cfg import RemotePicotoolCfg
 from .file_reader import do_load, PICO_ERROR_NOT_PERMITTED
 from ..file_type import get_file_type, FileType, MAX_WIFI_SETTINGS_FILE_SIZE
 from .client_connect import get_pico_connection
