@@ -8,10 +8,16 @@
 
 from ..handler_ids import *
 from ..aes import AES_BLOCK_SIZE, AES_IV
+from ..configuration import BOARD_ID_SIZE, MAX_DATA_SIZE, PORT_NUMBER
+from ..protocol import CHALLENGE_SIZE, AUTHENTICATION_SIZE, DATA_HASH_SIZE
+from ..protocol import RESPONDER_REQUEST_MAGIC, RESPONDER_REPLY_MAGIC, RESPONDER_MAX_SIZE
+from ..protocol import HEADER_STRUCT, HEADER_DATA_HASH_OFFSET
+from ..protocol import HMAC_DIGEST_SIZE, HMAC_BLOCK_SIZE
 
-from .. import aes
-from .. import configuration
+from ..version import PROTOCOL_VERSION
+from .. import configuration, aes
 from .. import typing_shim as typing
+
 from . import hostname, remote_handlers, storage
 from . import remote_file_io
 
@@ -20,38 +26,9 @@ import os
 import socket
 import struct
 
-
-PORT_NUMBER =               1404
-RESPONDER_REQUEST_MAGIC =  b"PWS?"
-RESPONDER_REPLY_MAGIC =    b"PWS:"
-BOARD_ID_SIZE =             8 
-RESPONDER_MAX_SIZE =        20
-MAX_DATA_SIZE =             4096
-
-CHALLENGE_SIZE =            15
-AUTHENTICATION_SIZE =       15
-AES_BLOCK_SIZE =            16
-DATA_HASH_SIZE =            7
-HMAC_BLOCK_SIZE =           64
-HMAC_DIGEST_SIZE =          32
-
-ID_FIRST_HANDLER = ID_PICO_INFO_HANDLER
-NUM_HANDLERS = ID_LAST_USER_HANDLER + 1 - ID_FIRST_HANDLER
-
-PROTOCOL_VERSION = 1
 ZERO_BLOCK = AES_IV
 DEBUG_HANDLERS = False
 
-# Note- the structure of a reply_header or request_header is as follows:
-# typedef struct enc_message_header_t {
-#    uint32_t    data_size;
-#    int32_t     parameter_or_result;
-#    uint8_t     msg_type;
-#    uint8_t     data_hash[DATA_HASH_SIZE];
-# } enc_message_header_t;
-# The size of this structure should be AES_BLOCK_SIZE
-HEADER_STRUCT = "<IiB7s"
-HEADER_DATA_HASH_OFFSET = AES_BLOCK_SIZE - DATA_HASH_SIZE
 
 def __unpack_header(header: bytes):
     # return type is typing.Tuple[int, int, int, bytes]

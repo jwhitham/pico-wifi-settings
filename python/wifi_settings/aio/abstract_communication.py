@@ -13,8 +13,8 @@ SPDX-License-Identifier: BSD-3-Clause
 from ..handler_ids import *
 from ..exceptions import *
 from ..aes import AbstractAES256CBCFactory, AES_BLOCK_SIZE
-from ..protocol import CHALLENGE_SIZE, AUTHENTICATION_SIZE
-from ..protocol import DATA_HASH_SIZE, HEADER_SIZE, PAD_BLOCK_1
+from ..protocol import CHALLENGE_SIZE, AUTHENTICATION_SIZE, HEADER_STRUCT
+from ..protocol import DATA_HASH_SIZE, HEADER_DATA_HASH_OFFSET, PAD_BLOCK_1
 from ..protocol import get_pad_bytes
 
 from abc import abstractmethod
@@ -187,12 +187,10 @@ class AbstractCommunication:
         assert self.enc_receive is not None
 
         # Read and decrypt an encrypted header block
-        clear_block = self.enc_receive.decrypt(await self.read_block())
+        header = self.enc_receive.decrypt(await self.read_block())
 
         # Header block contains the message type and its result value
-        header = clear_block[:HEADER_SIZE]
-        (data_size, result_value, msg_type) = struct.unpack("<IiB", header)
-        data_hash = clear_block[HEADER_SIZE:]
+        (data_size, result_value, msg_type, data_hash) = struct.unpack(HEADER_STRUCT, header)
 
         # Validate parameters
         self.validate(msg_type, data_size, result_value)
@@ -206,7 +204,7 @@ class AbstractCommunication:
 
         # Reassemble and check integrity
         result_data = b"".join(blocks)[:data_size]
-        if data_hash != self.get_data_hash(result_data, header):
+        if data_hash != self.get_data_hash(result_data, header[:HEADER_DATA_HASH_OFFSET]):
             raise CorruptedMessageError("Reply hash incorrect")
 
         return (msg_type, result_data, result_value)
@@ -219,11 +217,11 @@ class AbstractCommunication:
             request_data = bytes(request_data)
 
         # Send header
-        header = struct.pack("<IiB", len(request_data), parameter, msg_type)
-        data_hash = self.get_data_hash(request_data, header)
-        clear_block = header + data_hash
-        assert len(clear_block) == AES_BLOCK_SIZE
-        blocks = [self.enc_transmit.encrypt(clear_block)]
+        header = struct.pack(HEADER_STRUCT, len(request_data), parameter, msg_type, b"\x00" * DATA_HASH_SIZE)
+        data_hash = self.get_data_hash(request_data, header[:HEADER_DATA_HASH_OFFSET])
+        header = header[:HEADER_DATA_HASH_OFFSET] + data_hash
+        assert len(header) == AES_BLOCK_SIZE
+        blocks = [self.enc_transmit.encrypt(header)]
 
         # Pad data to block boundary
         request_data += get_pad_bytes(len(request_data))
