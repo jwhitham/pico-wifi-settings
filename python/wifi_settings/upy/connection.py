@@ -9,13 +9,9 @@
 #
 
 from .. import configuration
+from .. import typing_shim as typing
 from . import storage, hostname, remote
 
-# Type-checking
-try:
-    import typing
-except ImportError:
-    pass
 
 # Micropython-specific imports:
 import machine # type: ignore

@@ -6,20 +6,19 @@
 # Remote update service for Micropython pico-wifi-settings.
 #
 
+from ..handler_ids import *
+from ..aes import AES_BLOCK_SIZE, AES_IV
+
+from .. import aes
+from .. import configuration
+from .. import typing_shim as typing
+from . import hostname, remote_handlers, storage
+from . import remote_file_io
+
 import hashlib
 import os
 import socket
 import struct
-
-import cryptolib  # type: ignore
-from . import hostname, configuration, remote_handlers, storage
-from . import remote_file_io
-
-# Type-checking
-try:
-    import typing
-except ImportError:
-    pass
 
 
 PORT_NUMBER =               1404
@@ -36,43 +35,12 @@ DATA_HASH_SIZE =            7
 HMAC_BLOCK_SIZE =           64
 HMAC_DIGEST_SIZE =          32
 
-ID_GREETING =               70      # s->c
-ID_REQUEST =                71      # s<-c
-ID_CHALLENGE =              72      # s->c
-ID_AUTHENTICATION =         73      # s<-c
-ID_RESPONSE =               74      # s->c
-ID_ACKNOWLEDGE =            75      # s<-c
-ID_OK =                     76      # s->c
-ID_AUTH_ERROR =             77      # both
-ID_VERSION_ERROR =          78      # both
-ID_BAD_MSG_ERROR =          79      # both
-ID_BAD_PARAM_ERROR =        80      # s->c
-ID_BAD_HANDLER_ERROR =      81      # s->c
-ID_NO_SECRET_ERROR =        82      # s->c
-ID_CORRUPT_ERROR =          83      # s->c
-ID_UNKNOWN_ERROR =          84      # s->c
-ID_PICO_INFO_HANDLER =      120
-ID_UPDATE_HANDLER =         121
-ID_READ_HANDLER =           122     # C only
-ID_FILE_IO_HANDLER =        123     # MicroPython only
-ID_UPDATE_REBOOT_HANDLER =  124
-ID_FLASH_WRITE_HANDLER =    125     # C only
-ID_RESERVED_6 =             126
-ID_OTA_FIRMWARE_UPDATE_HANDLER = 127        # C only
-ID_FIRST_USER_HANDLER =     128
-ID_LAST_USER_HANDLER =      143
-
 ID_FIRST_HANDLER = ID_PICO_INFO_HANDLER
 NUM_HANDLERS = ID_LAST_USER_HANDLER + 1 - ID_FIRST_HANDLER
-HEADER_SIZE = AES_BLOCK_SIZE - DATA_HASH_SIZE
 
 PROTOCOL_VERSION = 1
-AES_IV = ZERO_BLOCK = b"\x00" * AES_BLOCK_SIZE
+ZERO_BLOCK = AES_IV
 DEBUG_HANDLERS = False
-
-# Magic number for CBC mode
-# see https://github.com/micropython/micropython/blob/master/docs/library/cryptolib.rst
-CIPHER_MODE = 2
 
 # Note- the structure of a reply_header or request_header is as follows:
 # typedef struct enc_message_header_t {
@@ -147,8 +115,8 @@ class Session:
     server_challenge: bytes # CHALLENGE_SIZE
     output_block: bytes # AES_BLOCK_SIZE
     input_block: bytes # AES_BLOCK_SIZE
-    decrypt: cryptolib.aes
-    encrypt: cryptolib.aes
+    decrypt: aes.AbstractAES256CBCFactory
+    encrypt: aes.AbstractAES256CBCFactory
     reply_header: bytes # AES_BLOCK_SIZE
     request_header: bytes # AES_BLOCK_SIZE
     state: int
@@ -191,10 +159,10 @@ class Session:
         """Generate encryption and decryption keys
         and Micropython cryptolib objects."""
         raw_key = self.generate_authentication(b"SK")
-        self.encrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
+        self.encrypt = aes.AES256CBCFactory(raw_key)
 
         raw_key = self.generate_authentication(b"CK")
-        self.decrypt = cryptolib.aes(raw_key, CIPHER_MODE, AES_IV)
+        self.decrypt = aes.AES256CBCFactory(raw_key)
 
     def generate_enc_data_hash(self, header: bytes, data: bytes) -> bytes:
         """Generate and return a hash for the reply header and payload (if any).

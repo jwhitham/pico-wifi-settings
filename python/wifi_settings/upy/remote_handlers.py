@@ -7,26 +7,24 @@
 # pico-wifi-settings.
 #
 
-from . import hostname, connection, configuration, remote
+from . import hostname, connection, remote
+from .. import configuration
+from .. import typing_shim as typing
+
 import machine # type: ignore
 import sys
 
 PICO_ERROR_INVALID_ARG = -5
 PICO_ERROR_INVALID_DATA = -16
 
-# Type-checking
-try:
-    import typing
-    # Callback 1:
-    # Call parameters: (msg_type, data_buffer, input_data_size, input_parameter, arg)
-    # Return value: (output_data_size, result_value)
-    HandlerCallback1 = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], typing.Tuple[int, int]]]
-    # Callback 2:
-    # Call parameters: (msg_type, data_buffer, output_data_size, result_value, arg)
-    # Return value: None
-    HandlerCallback2 = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], None]]
-except ImportError:
-    pass
+# Callback 1:
+# Call parameters: (msg_type, data_buffer, input_data_size, input_parameter, arg)
+# Return value: (output_data_size, result_value)
+HandlerCallback1: typing.TypeAlias = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], typing.Tuple[int, int]]]
+# Callback 2:
+# Call parameters: (msg_type, data_buffer, output_data_size, result_value, arg)
+# Return value: None
+HandlerCallback2: typing.TypeAlias = typing.Optional[typing.Callable[[int, bytearray, int, int, typing.Any], None]]
 
 
 def pico_info_handler(

@@ -7,10 +7,8 @@
 # pico-wifi-settings.
 #
 
-try:
-    import typing
-except:
-    pass
+from .. import typing_shim as typing
+
 import struct
 import os
 
