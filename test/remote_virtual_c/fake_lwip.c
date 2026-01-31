@@ -44,6 +44,7 @@ struct tcp_pcb {
     int socket;
     struct callbacks_t callbacks;
     uint16_t outstanding_write_size;
+    uint16_t received_size;
 };
 
 
@@ -109,9 +110,12 @@ static bool process_read(struct tcp_pcb* pcb) {
             struct pbuf p;
             p.payload = buffer;
             p.len = (uint16_t) rc;
+            pcb->received_size = 0;
             if (pcb->callbacks.recv(
                     pcb->callbacks.arg, pcb, &p, ERR_OK) != ERR_OK) {
                 tcp_close(pcb);
+            } else {
+                ASSERT(pcb->received_size == rc);
             }
         }
         return true;
@@ -281,3 +285,15 @@ void tcp_err(struct tcp_pcb *pcb, tcp_err_fn err) {
     ASSERT(pcb->pcb_type == ACTIVE);
     pcb->callbacks.err = err;
 }
+
+void tcp_recved(struct tcp_pcb *pcb, u16_t len) {
+    ASSERT(pcb);
+    ASSERT(pcb->pcb_type == ACTIVE);
+    pcb->received += len;
+}
+
+void pbuf_free(struct pbuf *p)
+{
+    // allocated on the stack - do nothing!
+}
+

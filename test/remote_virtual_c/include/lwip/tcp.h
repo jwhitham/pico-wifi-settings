@@ -36,6 +36,8 @@ typedef void (*tcp_err_fn)(void *arg, err_t err);
 
 
 
+void pbuf_free(struct pbuf *p);
+void tcp_recved(struct tcp_pcb *pcb, u16_t len);
 uint16_t tcp_sndbuf(struct tcp_pcb *pcb);
 void tcp_arg(struct tcp_pcb *pcb, void *arg);
 void tcp_recv(struct tcp_pcb *pcb, tcp_recv_fn recv);
