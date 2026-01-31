@@ -13,6 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#define MAX_SECRET_SIZE 100
+
 uint8_t g_update_secret[MAX_SECRET_SIZE + 1];
 
 void panic(const char* fmt, ...) {

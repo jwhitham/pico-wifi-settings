@@ -18,13 +18,12 @@
 #endif
 
 
-handler_callback_result_t wifi_settings_pico_info_handler(
+int32_t wifi_settings_pico_info_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
-        uint32_t input_parameter,
+        int32_t input_parameter,
         uint32_t* output_data_size,
-        uint32_t* output_parameter,
         void* arg) {
 
     if (*output_data_size < sizeof(pico_info_t)) {
@@ -40,73 +39,62 @@ handler_callback_result_t wifi_settings_pico_info_handler(
     pico_info->chip_id = 0xaabbcc;
     pico_info->wifi_settings_version = 0xdef;
 
-    *output_parameter = strlen(pico_info->board_name);
-    return CALLBACK_OK;
+    return strlen(pico_info->board_name);
 }
 
-handler_callback_result_t wifi_settings_update_handler(
+int32_t wifi_settings_update_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
-        uint32_t input_parameter,
+        int32_t input_parameter,
         uint32_t* output_data_size,
-        uint32_t* output_parameter,
         void* arg) {
     *output_data_size = 0;
-    *output_parameter = 0;
     return CALLBACK_FAILURE_ERROR;
 }
 
-handler_callback_result_t wifi_settings_reboot_handler(
+int32_t wifi_settings_reboot_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
-        uint32_t input_parameter,
+        int32_t input_parameter,
         uint32_t* output_data_size,
-        uint32_t* output_parameter,
         void* arg) {
     *output_data_size = 0;
-    *output_parameter = 0;
     return CALLBACK_FAILURE_ERROR;
 }
 
-handler_callback_result_t wifi_settings_update_reboot_handler(
+int32_t wifi_settings_update_reboot_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
-        uint32_t input_parameter,
+        int32_t input_parameter,
         uint32_t* output_data_size,
-        uint32_t* output_parameter,
         void* arg) {
     *output_data_size = 0;
-    *output_parameter = 0;
     return CALLBACK_FAILURE_ERROR;
 }
 
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
-handler_callback_result_t wifi_settings_read_handler(
+int32_t wifi_settings_read_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
-        uint32_t input_parameter,
+        int32_t input_parameter,
         uint32_t* output_data_size,
-        uint32_t* output_parameter,
         void* arg) {
     *output_data_size = 0;
-    *output_parameter = 0;
     return CALLBACK_FAILURE_ERROR;
 }
 
-handler_callback_result_t wifi_settings_write_handler(
+int32_t wifi_settings_write_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
-        uint32_t input_parameter,
+        int32_t input_parameter,
         uint32_t* output_data_size,
-        uint32_t* output_parameter,
         void* arg) {
     *output_data_size = 0;
-    *output_parameter = 0;
     return CALLBACK_FAILURE_ERROR;
 }
 #endif
