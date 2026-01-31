@@ -9,22 +9,15 @@ Copyright (c) 2026 Jack Whitham
 SPDX-License-Identifier: BSD-3-Clause
 """
 
-from ..handler_ids import *
+from ..file_io_protocol import *
 from ..exceptions import *
 from .client import Client
 from ..pico_info import PicoInfo
+from ..handler_ids import ID_FILE_IO_HANDLER
 
 import os
 import struct
 import typing
-
-FILE_IO_CMD_STRUCT = "<HBB"
-FILE_IO_CMD_STRUCT_SIZE = 4
-FILE_IO_CMD_GET_FILE_SIZE = 1
-FILE_IO_CMD_READ_FROM_FILE = 2
-FILE_IO_ERROR_INVALID_SIZE = -1
-FILE_IO_ERROR_INVALID_COMMAND = -2
-FILE_IO_ERROR_FILE_NAME_UNICODE_ERROR = -3
 
 class RemoteFileIO:
     def __init__(self, client: Client, pico_info: PicoInfo) -> None:

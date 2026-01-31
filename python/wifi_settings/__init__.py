@@ -17,7 +17,7 @@ from .exceptions import *
 from .handler_ids import *
 from .pico_info import Family, PicoInfo
 from .file_type import get_file_type, FileType
-from . import protocol, version, configuration
+from . import protocol, version, configuration, file_io_protocol
 
 try:
     # For use on Micropython

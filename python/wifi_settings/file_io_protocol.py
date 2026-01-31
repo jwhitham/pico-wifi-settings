@@ -1,0 +1,17 @@
+"""
+Protocol constants for the file I/O subsystem
+
+Copyright (c) 2026 Jack Whitham
+
+SPDX-License-Identifier: BSD-3-Clause
+"""
+
+FILE_IO_CMD_STRUCT = "<HBB"
+FILE_IO_CMD_STRUCT_SIZE = 4
+FILE_IO_CMD_GET_FILE_SIZE = 1
+FILE_IO_CMD_READ_FROM_FILE = 2
+
+FILE_IO_ERROR_INVALID_SIZE = -1
+FILE_IO_ERROR_INVALID_COMMAND = -2
+FILE_IO_ERROR_FILE_NAME_UNICODE_ERROR = -3
+

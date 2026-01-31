@@ -7,18 +7,12 @@
 # pico-wifi-settings.
 #
 
+from ..file_io_protocol import *
+from ..exceptions import *
 from .. import typing_shim as typing
 
 import struct
 import os
-
-FILE_IO_CMD_STRUCT = "<HBB"
-FILE_IO_CMD_STRUCT_SIZE = 4
-FILE_IO_CMD_GET_FILE_SIZE = 1
-FILE_IO_CMD_READ_FROM_FILE = 2
-FILE_IO_ERROR_INVALID_SIZE = -1
-FILE_IO_ERROR_INVALID_COMMAND = -2
-FILE_IO_ERROR_FILE_NAME_UNICODE_ERROR = -3
 
 def file_io_handler(
         msg_type: int,
