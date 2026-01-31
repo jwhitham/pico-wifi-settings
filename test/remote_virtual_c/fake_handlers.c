@@ -7,10 +7,10 @@
 #include "wifi_settings.h"
 #include "wifi_settings/wifi_settings_remote.h"
 #include "wifi_settings/wifi_settings_remote_handlers.h"
-#include "wifi_settings/wifi_settings_flash_storage.h"
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #ifndef ENABLE_REMOTE_UPDATE
@@ -26,20 +26,17 @@ int32_t wifi_settings_pico_info_handler(
         uint32_t* output_data_size,
         void* arg) {
 
-    if (*output_data_size < sizeof(pico_info_t)) {
-        return CALLBACK_PARAM_ERROR;
-    }
-
-    *output_data_size = sizeof(pico_info_t);
-    pico_info_t* pico_info = (pico_info_t*) data_buffer;
-    memset(pico_info, 0, sizeof(pico_info_t));
-
-    memset(pico_info->board_id, 0xaa, sizeof(pico_info->board_id));
-    strcpy(pico_info->board_name, "fake_handlers");
-    pico_info->chip_id = 0xaabbcc;
-    pico_info->wifi_settings_version = 0xdef;
-
-    return strlen(pico_info->board_name);
+    *output_data_size = snprintf(data_buffer, *output_data_size,
+        "board_id=123456789ABCDEF0\n"
+        "wifi_settings_version=%s\n"
+        "name=test\n"
+        "id_last_user_handler=%d\n"
+        "max_data_size=%d\n"
+        "implementation=C\n",
+        WIFI_SETTINGS_VERSION_STRING,
+        ID_LAST_USER_HANDLER,
+        MAX_DATA_SIZE);
+    return *output_data_size;
 }
 
 int32_t wifi_settings_update_handler(
@@ -50,7 +47,7 @@ int32_t wifi_settings_update_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return CALLBACK_FAILURE_ERROR;
+    return -1;
 }
 
 int32_t wifi_settings_reboot_handler(
@@ -61,7 +58,7 @@ int32_t wifi_settings_reboot_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return CALLBACK_FAILURE_ERROR;
+    return -1;
 }
 
 int32_t wifi_settings_update_reboot_handler(
@@ -72,7 +69,7 @@ int32_t wifi_settings_update_reboot_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return CALLBACK_FAILURE_ERROR;
+    return -1;
 }
 
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
@@ -84,7 +81,7 @@ int32_t wifi_settings_read_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return CALLBACK_FAILURE_ERROR;
+    return -1;
 }
 
 int32_t wifi_settings_write_handler(
@@ -95,6 +92,6 @@ int32_t wifi_settings_write_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return CALLBACK_FAILURE_ERROR;
+    return -1;
 }
 #endif

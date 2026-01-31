@@ -23,7 +23,10 @@ include_directories(
         ${CMAKE_CURRENT_LIST_DIR}/include
         ${CMAKE_CURRENT_LIST_DIR}/../../include
     )
-
+add_compile_definitions(
+        WIFI_SETTINGS_VERSION_STRING="0.0.0"
+        WIFI_SETTINGS_PROJECT_URL=""
+    )
 add_executable(remote_virtual
         ${CMAKE_CURRENT_LIST_DIR}/remote_virtual.c
         ${CMAKE_CURRENT_LIST_DIR}/fake_mbedtls.c

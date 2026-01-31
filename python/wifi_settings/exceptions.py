@@ -94,11 +94,6 @@ class BadParameterError(RemoteError):
     def __str__(self) -> str:
         return "BadParameterError()"
 
-class HandlerFailedError(RemoteError):
-    """Indicates handler returned CALLBACK_FAILURE_ERROR."""
-    def __str__(self) -> str:
-        return "HandlerFailedError()"
-
 class BadHandlerError(RemoteError):
     """Indicates the requested handler does not exist."""
     def __str__(self) -> str:
