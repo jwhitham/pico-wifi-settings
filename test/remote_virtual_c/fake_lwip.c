@@ -8,6 +8,8 @@
  */
 
 #include "remote_virtual.h"
+#include "lwip/common.h"
+#include "lwip/pbuf.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 
@@ -322,3 +324,23 @@ void tcp_recved(struct tcp_pcb *pcb, u16_t len) {
     pcb->received_size += len;
 }
 
+err_t udp_sendto(struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* dst_ip, u16_t dst_port);
+struct udp_pcb* udp_new_ip_type(u8_t type);
+void udp_recv(struct udp_pcb* pcb, udp_recv_fn recv, void * recv_arg);
+err_t udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port);
+
+void cyw43_arch_lwip_begin(void)
+{
+}
+
+void cyw43_arch_lwip_end(void)
+{
+}
+
+
+wifi_settings_remote.c:(.text+0x13b2): undefined reference to `wifi_settings_get_board_id_hex'
+/usr/bin/ld: wifi_settings_remote.c:(.text+0x1817): undefined reference to `wifi_settings_update_reboot_handler2'
+/usr/bin/ld: wifi_settings_remote.c:(.text+0x1821): undefined reference to `wifi_settings_update_reboot_handler1'
+/usr/bin/ld: wifi_settings_remote.c:(.text+0x1853): undefined reference to `wifi_settings_write_flash_handler'
+/usr/bin/ld: wifi_settings_remote.c:(.text+0x186c): undefined reference to `wifi_settings_ota_firmware_update_handler2'
+/usr/bin/ld: wifi_settings_remote.c:(.text+0x1876): undefined reference to `wifi_settings_ota_firmware_update_handler1'
