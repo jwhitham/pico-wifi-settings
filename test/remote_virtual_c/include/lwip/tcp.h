@@ -14,13 +14,21 @@ typedef uint8_t u8_t;
 typedef struct ip_addr_t{
     uint32_t addr;
 } ip_addr_t;
+typedef int pbuf_layer;
+typedef int pbuf_type;
 
-#define ERR_OK      0
-#define ERR_ABRT    51
-#define ERR_ARG     52
+
+#define ERR_OK              0
+
+// each magical number should be unique with no relation to whatever LWIP uses:
+#define ERR_ABRT            51
+#define ERR_ARG             52
 #define TCP_WRITE_FLAG_COPY 53
-#define IPADDR_TYPE_ANY 54
-#define ERR_MEM     55
+#define IPADDR_TYPE_ANY     54
+#define ERR_MEM             55
+#define ERR_VAL             56
+#define PBUF_TRANSPORT      57
+#define PBUF_RAM            58
 
 struct tcp_pcb;
 
@@ -34,9 +42,9 @@ typedef err_t (*tcp_recv_fn)(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
 typedef err_t (*tcp_sent_fn)(void *arg, struct tcp_pcb *tpcb, u16_t len);
 typedef void (*tcp_err_fn)(void *arg, err_t err);
 
-
-
+struct pbuf* pbuf_alloc (pbuf_layer layer, u16_t length, pbuf_type type);
 void pbuf_free(struct pbuf *p);
+
 void tcp_recved(struct tcp_pcb *pcb, u16_t len);
 uint16_t tcp_sndbuf(struct tcp_pcb *pcb);
 void tcp_arg(struct tcp_pcb *pcb, void *arg);

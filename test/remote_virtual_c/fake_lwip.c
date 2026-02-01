@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 
 #define NUM_PCBS                20
+#define NUM_PBUFS               20
 #define WRITE_BUFFER_SIZE       1024
 #define READ_BUFFER_SIZE        1024
 
@@ -49,6 +50,7 @@ struct tcp_pcb {
 
 
 static struct tcp_pcb g_pcbs[NUM_PCBS];
+static struct pbuf g_pbufs[NUM_PBUFS];
 
 static struct tcp_pcb* allocate_pcb() {
     for (uint32_t i = 0; i < NUM_PCBS; i++) {
@@ -59,7 +61,32 @@ static struct tcp_pcb* allocate_pcb() {
             return pcb;
         }
     }
+    ASSERT(0);
     return NULL;
+}
+
+struct pbuf* pbuf_alloc(pbuf_layer layer, u16_t length, pbuf_type type)
+{
+    ASSERT(layer == PBUF_TRANSPORT);
+    ASSERT(type == PBUF_RAM);
+    for (uint32_t i = 0; i < NUM_PBUFS; i++) {
+        struct pbuf* p = &g_pbufs[i];
+        if (!p->payload) {
+            p->payload = calloc(1, length);
+            ASSERT(p->payload);
+            p->len = length;
+            return p;
+        }
+    }
+    ASSERT(0);
+    return NULL;
+}
+
+void pbuf_free(struct pbuf *p)
+{
+    free(p->payload);
+    p->payload = NULL;
+    p->len = 0;
 }
 
 static bool is_ready_for_read(int socket) {
@@ -107,16 +134,18 @@ static bool process_read(struct tcp_pcb* pcb) {
         } else {
             // Data received
             ASSERT(pcb->callbacks.recv);
-            struct pbuf p;
-            p.payload = buffer;
-            p.len = (uint16_t) rc;
+            struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, rc, PBUF_RAM);
+            ASSERT(p->payload);    // pbuf payload should have been allocated
+            ASSERT(p->len == rc);
             pcb->received_size = 0;
             if (pcb->callbacks.recv(
-                    pcb->callbacks.arg, pcb, &p, ERR_OK) != ERR_OK) {
+                    pcb->callbacks.arg, pcb, p, ERR_OK) != ERR_OK) {
                 tcp_close(pcb);
             } else {
                 ASSERT(pcb->received_size == rc);
             }
+            ASSERT(!p->payload);    // pbuf payload should have been freed
+            ASSERT(!p->len);
         }
         return true;
     }
@@ -289,11 +318,6 @@ void tcp_err(struct tcp_pcb *pcb, tcp_err_fn err) {
 void tcp_recved(struct tcp_pcb *pcb, u16_t len) {
     ASSERT(pcb);
     ASSERT(pcb->pcb_type == ACTIVE);
-    pcb->received += len;
-}
-
-void pbuf_free(struct pbuf *p)
-{
-    // allocated on the stack - do nothing!
+    pcb->received_size += len;
 }
 
