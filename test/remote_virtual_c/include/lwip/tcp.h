@@ -8,42 +8,16 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-typedef uint8_t err_t;
-typedef uint16_t u16_t;
-typedef uint8_t u8_t;
-typedef struct ip_addr_t{
-    uint32_t addr;
-} ip_addr_t;
-typedef int pbuf_layer;
-typedef int pbuf_type;
-
-
-#define ERR_OK              0
-
-// each magical number should be unique with no relation to whatever LWIP uses:
-#define ERR_ABRT            51
-#define ERR_ARG             52
-#define TCP_WRITE_FLAG_COPY 53
-#define IPADDR_TYPE_ANY     54
-#define ERR_MEM             55
-#define ERR_VAL             56
-#define PBUF_TRANSPORT      57
-#define PBUF_RAM            58
+#include "lwip/common.h"
+#include "lwip/pbuf.h"
 
 struct tcp_pcb;
-
-struct pbuf {
-    uint8_t* payload;
-    uint16_t len;
-};
 
 typedef err_t (*tcp_accept_fn)(void *arg, struct tcp_pcb *newpcb, err_t err);
 typedef err_t (*tcp_recv_fn)(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 typedef err_t (*tcp_sent_fn)(void *arg, struct tcp_pcb *tpcb, u16_t len);
 typedef void (*tcp_err_fn)(void *arg, err_t err);
 
-struct pbuf* pbuf_alloc (pbuf_layer layer, u16_t length, pbuf_type type);
-void pbuf_free(struct pbuf *p);
 
 void tcp_recved(struct tcp_pcb *pcb, u16_t len);
 uint16_t tcp_sndbuf(struct tcp_pcb *pcb);
@@ -58,6 +32,5 @@ err_t tcp_write(struct tcp_pcb *pcb, const void *dataptr, u16_t len, u8_t apifla
 struct tcp_pcb * tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog);
 struct tcp_pcb * tcp_new_ip_type(u8_t type);
 err_t tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port);
-bool fake_lwip_loop();
 
 #endif

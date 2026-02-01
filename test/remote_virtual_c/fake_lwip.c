@@ -9,6 +9,7 @@
 
 #include "remote_virtual.h"
 #include "lwip/tcp.h"
+#include "lwip/udp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
