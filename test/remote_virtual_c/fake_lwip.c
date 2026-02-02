@@ -28,14 +28,16 @@
 #define READ_BUFFER_SIZE        1024
 
 typedef enum pcb_type_t {
-    FREE = 0,
-    ALLOCATED,
-    PORT,
-    LISTEN,
-    ACTIVE,
+    FREE = 0,       // not in use, not allocated
+    ALLOCATED,      // ready for use
+    TCP_PORT,       // ready to bind
+    TCP_LISTEN,     // ready to listen
+    TCP_ACTIVE,     // bound and either listening or connected
+    UDP_PORT,       // ready to bind
+    UDP_ACTIVE,     // bound
 } pcb_type_t;
 
-struct callbacks_t {
+struct tcp_callbacks_t {
     void *arg;
     tcp_accept_fn accept;
     tcp_recv_fn recv;
@@ -43,23 +45,40 @@ struct callbacks_t {
     tcp_err_fn err;
 };
 
+struct udp_callbacks_t {
+    void *arg;
+    udp_recv_fn recv;
+};
+
 struct tcp_pcb {
     pcb_type_t pcb_type;
     int socket;
-    struct callbacks_t callbacks;
+    struct tcp_callbacks_t callbacks;
     uint16_t outstanding_write_size;
     uint16_t received_size;
 };
 
+struct udp_pcb {
+    pcb_type_t pcb_type;
+    int socket;
+    struct udp_callbacks_t callbacks;
+};
 
-static struct tcp_pcb g_pcbs[NUM_PCBS];
+union general_pcb {
+    struct tcp_pcb tcp;
+    struct udp_pcb udp;
+};
+
+
+static union general_pcb g_pcbs[NUM_PCBS];
 static struct pbuf g_pbufs[NUM_PBUFS];
+static unsigned g_cyw43_arch_lwip_count;
 
-static struct tcp_pcb* allocate_pcb() {
+static union general_pcb* allocate_pcb() {
     for (uint32_t i = 0; i < NUM_PCBS; i++) {
-        struct tcp_pcb* pcb = &g_pcbs[i];
+        union general_pcb* pcb = &g_pcbs[i];
         if (pcb->pcb_type == FREE) {
-            memset(pcb, 0, sizeof(struct tcp_pcb));
+            memset(pcb, 0, sizeof(union general_pcb));
             pcb->pcb_type = ALLOCATED;
             return pcb;
         }
@@ -70,7 +89,7 @@ static struct tcp_pcb* allocate_pcb() {
 
 struct pbuf* pbuf_alloc(pbuf_layer layer, u16_t length, pbuf_type type)
 {
-    ASSERT(layer == PBUF_TRANSPORT);
+    ASSERT(layer == PBUF_TRANSTCP_PORT);
     ASSERT(type == PBUF_RAM);
     for (uint32_t i = 0; i < NUM_PBUFS; i++) {
         struct pbuf* p = &g_pbufs[i];
@@ -109,12 +128,12 @@ static bool process_listen(struct tcp_pcb* pcb) {
         // New connection
         int a_socket = accept(pcb->socket, NULL, NULL);
         ASSERT(a_socket >= 0);
-        struct tcp_pcb* a_pcb = allocate_pcb();
+        struct tcp_pcb* a_pcb = &allocate_pcb()->tcp;
         ASSERT(a_pcb);
-        a_pcb->pcb_type = ACTIVE;
+        a_pcb->pcb_type = TCP_ACTIVE;
         a_pcb->socket = a_socket;
         ASSERT(pcb->callbacks.accept);
-        memcpy(&a_pcb->callbacks, &pcb->callbacks, sizeof(struct callbacks_t));
+        memcpy(&a_pcb->callbacks, &pcb->callbacks, sizeof(struct tcp_callbacks_t));
         if (pcb->callbacks.accept(
                 pcb->callbacks.arg, a_pcb, ERR_OK) != ERR_OK) {
             tcp_close(a_pcb);
@@ -137,7 +156,7 @@ static bool process_read(struct tcp_pcb* pcb) {
         } else {
             // Data received
             ASSERT(pcb->callbacks.recv);
-            struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, rc, PBUF_RAM);
+            struct pbuf* p = pbuf_alloc(PBUF_TRANSTCP_PORT, rc, PBUF_RAM);
             ASSERT(p->payload);    // pbuf payload should have been allocated
             ASSERT(p->len == rc);
             pcb->received_size = 0;
@@ -174,16 +193,16 @@ static bool process_write(struct tcp_pcb* pcb) {
 bool fake_lwip_loop() {
     bool activity = false;
     for (uint i = 0; i < NUM_PCBS; i++) {
-        struct tcp_pcb* pcb = &g_pcbs[i];
+        struct tcp_pcb* pcb = &g_tcp_pcbs[i];
         switch (pcb->pcb_type) {
             case FREE:
-            case PORT:
+            case TCP_PORT:
                 // No poll action required
                 break;
-            case LISTEN:
+            case TCP_LISTEN:
                 activity = process_listen(pcb) || activity;
                 break;
-            case ACTIVE:
+            case TCP_ACTIVE:
                 activity = process_read(pcb) || activity;
                 activity = process_write(pcb) || activity;
                 break;
@@ -202,7 +221,7 @@ bool fake_lwip_loop() {
 void tcp_abort(struct tcp_pcb *pcb) {
     ASSERT(pcb);
     if (pcb->socket >= 0) {
-        if (pcb->pcb_type == ACTIVE) {
+        if (pcb->pcb_type == TCP_ACTIVE) {
             shutdown(pcb->socket, SHUT_RDWR);
         }
         close(pcb->socket);
@@ -219,14 +238,14 @@ err_t tcp_close(struct tcp_pcb *pcb) {
 
 uint16_t tcp_sndbuf(struct tcp_pcb *pcb) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
     return (uint16_t) WRITE_BUFFER_SIZE - pcb->outstanding_write_size;
 }
 
 err_t tcp_write(struct tcp_pcb *pcb, const void *dataptr, u16_t len, u8_t apiflags) {
     ASSERT(pcb);
     ASSERT(apiflags == TCP_WRITE_FLAG_COPY);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
 
     uint16_t available_write_space =
         (uint16_t) WRITE_BUFFER_SIZE - pcb->outstanding_write_size;
@@ -245,18 +264,17 @@ err_t tcp_write(struct tcp_pcb *pcb, const void *dataptr, u16_t len, u8_t apifla
 
 struct tcp_pcb* tcp_new_ip_type(u8_t type) {
     ASSERT(type == IPADDR_TYPE_ANY);
-    struct tcp_pcb* pcb = allocate_pcb();
+    struct tcp_pcb* pcb = &allocate_pcb()->tcp;
     pcb->socket = socket(AF_INET, SOCK_STREAM, 0);
     ASSERT(pcb->socket >= 0);
-    pcb->pcb_type = PORT;
+    pcb->pcb_type = TCP_PORT;
     return pcb;
 }
 
-err_t tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
+static err_t general_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
     ASSERT(pcb);
     ASSERT(ipaddr == NULL);
     ASSERT(pcb->socket >= 0);
-    ASSERT(pcb->pcb_type == PORT);
 
     int enable = 1;
     int rc = setsockopt(pcb->socket, SOL_SOCKET,
@@ -274,67 +292,97 @@ err_t tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
     return ERR_OK;
 }
 
+err_t tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
+    ASSERT(pcb);
+    ASSERT(pcb->pcb_type == TCP_PORT);
+    return general_bind((union general_pcb*) pcb, ipaddr, port);
+}
+
 struct tcp_pcb* tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog) {
     ASSERT(pcb);
 
-    struct tcp_pcb* service_pcb = allocate_pcb();
+    struct tcp_pcb* service_pcb = &allocate_pcb()->tcp;
     ASSERT(pcb->socket >= 0);
-    ASSERT(pcb->pcb_type == PORT);
+    ASSERT(pcb->pcb_type == TCP_PORT);
     service_pcb->socket = pcb->socket;
     pcb->socket = -1;
     int rc = listen(service_pcb->socket, backlog);
     ASSERT(rc == 0);
-    service_pcb->pcb_type = LISTEN;
+    service_pcb->pcb_type = TCP_LISTEN;
     return service_pcb;
 }
 
 void tcp_arg(struct tcp_pcb *pcb, void *arg) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
     pcb->callbacks.arg = arg;
 }
 
 void tcp_accept(struct tcp_pcb *pcb, tcp_accept_fn accept) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == LISTEN);
+    ASSERT(pcb->pcb_type == TCP_LISTEN);
     pcb->callbacks.accept = accept;
 }
 
 void tcp_recv(struct tcp_pcb *pcb, tcp_recv_fn recv) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
     pcb->callbacks.recv = recv;
 }
 
 void tcp_sent(struct tcp_pcb *pcb, tcp_sent_fn sent) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
     pcb->callbacks.sent = sent;
 }
 
 void tcp_err(struct tcp_pcb *pcb, tcp_err_fn err) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
     pcb->callbacks.err = err;
 }
 
 void tcp_recved(struct tcp_pcb *pcb, u16_t len) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == ACTIVE);
+    ASSERT(pcb->pcb_type == TCP_ACTIVE);
     pcb->received_size += len;
 }
 
-err_t udp_sendto(struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* dst_ip, u16_t dst_port);
-struct udp_pcb* udp_new_ip_type(u8_t type);
-void udp_recv(struct udp_pcb* pcb, udp_recv_fn recv, void * recv_arg);
-err_t udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port);
+struct udp_pcb* udp_new_ip_type(u8_t type) {
+    ASSERT(type == IPADDR_TYPE_ANY);
+    struct udp_pcb* pcb = &allocate_pcb()->udp;
+    pcb->socket = socket(AF_INET, SOCK_DRAM, 0);
+    ASSERT(pcb->socket >= 0);
+    pcb->pcb_type = UDP_PORT;
+    return pcb;
+}
+
+err_t udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port) {
+    ASSERT(pcb);
+    ASSERT(pcb->pcb_type == UDP_PORT);
+    return general_bind((union general_pcb*) pcb, ipaddr, port);
+}
+
+err_t udp_sendto(struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* dst_ip, u16_t dst_port) {
+    ASSERT(pcb);
+    ASSERT(pcb->pcb_type == UDP_ACTIVE);
+}
+
+void udp_recv(struct udp_pcb* pcb, udp_recv_fn recv, void * recv_arg) {
+    ASSERT(pcb);
+    ASSERT(pcb->pcb_type == UDP_ACTIVE);
+    pcb->callbacks.recv = recv;
+}
 
 void cyw43_arch_lwip_begin(void)
 {
+    g_cyw43_arch_lwip_count++;
 }
 
 void cyw43_arch_lwip_end(void)
 {
+    ASSERT(g_cyw43_arch_lwip_count > 0);
+    g_cyw43_arch_lwip_count--;
 }
 
 
