@@ -157,9 +157,11 @@ static bool process_read(struct tcp_pcb* pcb) {
         } else {
             // Data received
             ASSERT(pcb->callbacks.recv);
+            ASSERT(rc <= sizeof(buffer));
             struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, rc, PBUF_RAM);
             ASSERT(p->payload);    // pbuf payload should have been allocated
             ASSERT(p->len == rc);
+            memcpy(p->payload, buffer, p->len);
             pcb->received_size = 0;
             if (pcb->callbacks.recv(
                     pcb->callbacks.arg, pcb, p, ERR_OK) != ERR_OK) {
@@ -184,8 +186,15 @@ static bool process_write(struct tcp_pcb* pcb) {
                 size) != ERR_OK) {
             tcp_close(pcb);
         }
-        ASSERT(pcb->outstanding_write_size >= size);
-        pcb->outstanding_write_size -= size;
+        if (pcb->pcb_type == FREE) {
+            // closed - pcb is reset
+            ASSERT(pcb->outstanding_write_size == 0);
+        } else {
+            // still open
+            ASSERT(pcb->pcb_type == TCP_ACTIVE);
+            ASSERT(pcb->outstanding_write_size >= size);
+            pcb->outstanding_write_size -= size;
+        }
         return true;
     }
     return false;
@@ -388,7 +397,7 @@ err_t udp_sendto(struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* dst_ip, u
 
 void udp_recv(struct udp_pcb* pcb, udp_recv_fn recv, void * recv_arg) {
     ASSERT(pcb);
-    ASSERT(pcb->pcb_type == UDP_ACTIVE);
+    ASSERT((pcb->pcb_type == UDP_ACTIVE) || (pcb->pcb_type == UDP_PORT));
     pcb->callbacks.recv = recv;
 }
 
