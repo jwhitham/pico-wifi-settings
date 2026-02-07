@@ -61,7 +61,7 @@ int32_t wifi_settings_reboot_handler(
     return -1;
 }
 
-int32_t wifi_settings_update_reboot_handler(
+int32_t wifi_settings_update_reboot_handler1(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
@@ -70,6 +70,15 @@ int32_t wifi_settings_update_reboot_handler(
         void* arg) {
     *output_data_size = 0;
     return -1;
+}
+
+void wifi_settings_update_reboot_handler2(
+        uint8_t msg_type,
+        uint8_t* data_buffer,
+        uint32_t input_data_size,
+        int32_t input_parameter,
+        void* arg)
+{
 }
 
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
@@ -84,7 +93,7 @@ int32_t wifi_settings_read_handler(
     return -1;
 }
 
-int32_t wifi_settings_write_handler(
+int32_t wifi_settings_write_flash_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
         uint32_t input_data_size,
@@ -94,4 +103,28 @@ int32_t wifi_settings_write_handler(
     *output_data_size = 0;
     return -1;
 }
+
+int32_t wifi_settings_ota_firmware_update_handler1(
+        uint8_t msg_type,
+        uint8_t* data_buffer,
+        uint32_t input_data_size,
+        int32_t input_parameter,
+        uint32_t* output_data_size,
+        void* arg) {
+    *output_data_size = 0;
+    return -1;
+}
+
+void wifi_settings_ota_firmware_update_handler2(
+        uint8_t msg_type,
+        uint8_t* data_buffer,
+        uint32_t input_data_size,
+        int32_t input_parameter,
+        void* arg) {
+}
+
 #endif
+
+const char* wifi_settings_get_board_id_hex() {
+    return "012345679ABCDEF";
+}

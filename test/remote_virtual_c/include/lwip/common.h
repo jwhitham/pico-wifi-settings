@@ -2,6 +2,7 @@
 #define COMMON_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef uint8_t err_t;
 typedef uint16_t u16_t;

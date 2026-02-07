@@ -65,6 +65,7 @@ struct udp_pcb {
 };
 
 union general_pcb {
+    pcb_type_t pcb_type;
     struct tcp_pcb tcp;
     struct udp_pcb udp;
 };
@@ -89,7 +90,7 @@ static union general_pcb* allocate_pcb() {
 
 struct pbuf* pbuf_alloc(pbuf_layer layer, u16_t length, pbuf_type type)
 {
-    ASSERT(layer == PBUF_TRANSTCP_PORT);
+    ASSERT(layer == PBUF_TRANSPORT);
     ASSERT(type == PBUF_RAM);
     for (uint32_t i = 0; i < NUM_PBUFS; i++) {
         struct pbuf* p = &g_pbufs[i];
@@ -156,7 +157,7 @@ static bool process_read(struct tcp_pcb* pcb) {
         } else {
             // Data received
             ASSERT(pcb->callbacks.recv);
-            struct pbuf* p = pbuf_alloc(PBUF_TRANSTCP_PORT, rc, PBUF_RAM);
+            struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, rc, PBUF_RAM);
             ASSERT(p->payload);    // pbuf payload should have been allocated
             ASSERT(p->len == rc);
             pcb->received_size = 0;
@@ -193,18 +194,22 @@ static bool process_write(struct tcp_pcb* pcb) {
 bool fake_lwip_loop() {
     bool activity = false;
     for (uint i = 0; i < NUM_PCBS; i++) {
-        struct tcp_pcb* pcb = &g_tcp_pcbs[i];
+        union general_pcb* pcb = &g_pcbs[i];
         switch (pcb->pcb_type) {
             case FREE:
             case TCP_PORT:
+            case UDP_PORT:
                 // No poll action required
                 break;
             case TCP_LISTEN:
-                activity = process_listen(pcb) || activity;
+                activity = process_listen(&pcb->tcp) || activity;
                 break;
             case TCP_ACTIVE:
-                activity = process_read(pcb) || activity;
-                activity = process_write(pcb) || activity;
+                activity = process_read(&pcb->tcp) || activity;
+                activity = process_write(&pcb->tcp) || activity;
+                break;
+            case UDP_ACTIVE:
+                //activity = process_read(&pcb->udp) || activity;
                 break;
             case ALLOCATED:
                 // Should not be in this state
@@ -271,13 +276,12 @@ struct tcp_pcb* tcp_new_ip_type(u8_t type) {
     return pcb;
 }
 
-static err_t general_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
-    ASSERT(pcb);
+static err_t general_bind(int socket, const ip_addr_t *ipaddr, u16_t port) {
     ASSERT(ipaddr == NULL);
-    ASSERT(pcb->socket >= 0);
+    ASSERT(socket >= 0);
 
     int enable = 1;
-    int rc = setsockopt(pcb->socket, SOL_SOCKET,
+    int rc = setsockopt(socket, SOL_SOCKET,
             SO_REUSEADDR, &enable, sizeof(enable));
     ASSERT(rc == 0);
 
@@ -286,7 +290,7 @@ static err_t general_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t po
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    rc = bind(pcb->socket, (const struct sockaddr*) &addr, sizeof(addr));
+    rc = bind(socket, (const struct sockaddr*) &addr, sizeof(addr));
     ASSERT(rc == 0);
 
     return ERR_OK;
@@ -295,7 +299,7 @@ static err_t general_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t po
 err_t tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
     ASSERT(pcb);
     ASSERT(pcb->pcb_type == TCP_PORT);
-    return general_bind((union general_pcb*) pcb, ipaddr, port);
+    return general_bind(pcb->socket, ipaddr, port);
 }
 
 struct tcp_pcb* tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog) {
@@ -351,7 +355,7 @@ void tcp_recved(struct tcp_pcb *pcb, u16_t len) {
 struct udp_pcb* udp_new_ip_type(u8_t type) {
     ASSERT(type == IPADDR_TYPE_ANY);
     struct udp_pcb* pcb = &allocate_pcb()->udp;
-    pcb->socket = socket(AF_INET, SOCK_DRAM, 0);
+    pcb->socket = socket(AF_INET, SOCK_DGRAM, 0);
     ASSERT(pcb->socket >= 0);
     pcb->pcb_type = UDP_PORT;
     return pcb;
@@ -360,12 +364,26 @@ struct udp_pcb* udp_new_ip_type(u8_t type) {
 err_t udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port) {
     ASSERT(pcb);
     ASSERT(pcb->pcb_type == UDP_PORT);
-    return general_bind((union general_pcb*) pcb, ipaddr, port);
+    return general_bind(pcb->socket, ipaddr, port);
 }
 
 err_t udp_sendto(struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* dst_ip, u16_t dst_port) {
     ASSERT(pcb);
     ASSERT(pcb->pcb_type == UDP_ACTIVE);
+    ASSERT(p->payload);
+    ASSERT(!dst_ip);
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(dst_port);
+    addr.sin_addr.s_addr = dst_ip->addr;
+
+    ssize_t check = sendto(pcb->socket, p->payload, p->len, 0,
+                        (const struct sockaddr*) &addr, sizeof(addr));
+    ASSERT(check == p->len);
+    pbuf_free(p);
+    return ERR_OK;
 }
 
 void udp_recv(struct udp_pcb* pcb, udp_recv_fn recv, void * recv_arg) {
@@ -385,10 +403,3 @@ void cyw43_arch_lwip_end(void)
     g_cyw43_arch_lwip_count--;
 }
 
-
-wifi_settings_remote.c:(.text+0x13b2): undefined reference to `wifi_settings_get_board_id_hex'
-/usr/bin/ld: wifi_settings_remote.c:(.text+0x1817): undefined reference to `wifi_settings_update_reboot_handler2'
-/usr/bin/ld: wifi_settings_remote.c:(.text+0x1821): undefined reference to `wifi_settings_update_reboot_handler1'
-/usr/bin/ld: wifi_settings_remote.c:(.text+0x1853): undefined reference to `wifi_settings_write_flash_handler'
-/usr/bin/ld: wifi_settings_remote.c:(.text+0x186c): undefined reference to `wifi_settings_ota_firmware_update_handler2'
-/usr/bin/ld: wifi_settings_remote.c:(.text+0x1876): undefined reference to `wifi_settings_ota_firmware_update_handler1'
