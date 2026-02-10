@@ -13,19 +13,33 @@
 #include <string.h>
 #include <unistd.h>
 
-#define MAX_SECRET_SIZE 100
-
-uint8_t g_update_secret[MAX_SECRET_SIZE + 1];
+static const char* g_update_secret;
+static const char* g_port_file;
 
 void panic(const char* fmt, ...) {
     fprintf(stderr, "Panic: %s\n", fmt);
     exit(1);
 }
 
+void notify_port_number(int port) {
+    if (!g_port_file) {
+        return;
+    }
+    FILE* fd = fopen(g_port_file, "wt");
+    if (!fd) {
+        return;
+    }
+    fprintf(fd, "%d\n", port);
+    fclose(fd);
+}
+
 bool wifi_settings_get_value_for_key(
             const char* key, char* value, uint* value_size) {
     ASSERT(strcmp(key, "update_secret") == 0);
 
+    if (!g_update_secret) {
+        return false;
+    }
     size_t actual_size = strlen(g_update_secret);
     if (actual_size == 0) {
         return false;
@@ -39,17 +53,14 @@ bool wifi_settings_get_value_for_key(
 }
 
 int main(int argc, char ** argv) {
-    if (argc <= 1) {
-        g_update_secret[0] = '\0';
-        printf("Secret is unset\n");
-    } else if (argc == 2) {
-        strncpy(g_update_secret, argv[1], MAX_SECRET_SIZE);
-        g_update_secret[MAX_SECRET_SIZE] = '\0';
-        printf("Secret is '%s'\n", g_update_secret);
-    } else if (argc > 2) {
-        fprintf(stderr, "Incorrect parameters\n");
+    if (argc != 3) {
+        fprintf(stderr, "Incorrect parameters; usage <port file name> <secret>\n");
         return 1;
     }
+    g_port_file = argv[1];
+    g_update_secret = argv[2];
+    printf("Port file is '%s'\n", g_port_file);
+    printf("Secret is '%s'\n", g_update_secret);
         
     int rc = wifi_settings_remote_init();
     ASSERT(rc == 0);

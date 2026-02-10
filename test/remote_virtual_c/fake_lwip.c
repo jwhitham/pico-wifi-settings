@@ -288,6 +288,7 @@ struct tcp_pcb* tcp_new_ip_type(u8_t type) {
 static err_t general_bind(int socket, const ip_addr_t *ipaddr, u16_t port) {
     ASSERT(ipaddr == NULL);
     ASSERT(socket >= 0);
+    ASSERT(port == 1404);
 
     int enable = 1;
     int rc = setsockopt(socket, SOL_SOCKET,
@@ -297,10 +298,15 @@ static err_t general_bind(int socket, const ip_addr_t *ipaddr, u16_t port) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
+    addr.sin_port = 0;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     rc = bind(socket, (const struct sockaddr*) &addr, sizeof(addr));
     ASSERT(rc == 0);
+    socklen_t addr_len = sizeof(addr);
+    rc = getsockname(socket, &addr, &addr_len);
+    ASSERT(rc == 0);
+ 
+    notify_port_number(ntohs(addr.sin_port));
 
     return ERR_OK;
 }
