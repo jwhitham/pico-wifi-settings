@@ -30,10 +30,11 @@ def temp_dir():
 async def test_virtual_c(temp_dir):
     test_build_path = Path(temp_dir) / "build"
     test_build_path.mkdir()
-    cmake_handle = await asyncio.create_subprocess_exec(["cmake", "-DCMAKE_BUILD_DEBUG=1", str(TEST_PATH)], cwd=test_build_path)
+    cmake_handle = await asyncio.create_subprocess_exec("cmake", "-DCMAKE_BUILD_DEBUG=1", str(TEST_PATH),
+        cwd=str(test_build_path))
     rc = await cmake_handle.wait()
     assert rc == 0
-    make_handle = await asyncio.create_subprocess_exec(["make"], cwd=test_build_path)
+    make_handle = await asyncio.create_subprocess_exec("make", cwd=str(test_build_path))
     rc = await make_handle.wait()
     assert rc == 0
     test_program = test_build_path / "remote_virtual"
@@ -42,31 +43,36 @@ async def test_virtual_c(temp_dir):
 
     # start server
     test_program_handle = await asyncio.create_subprocess_exec(
-            [str(test_program), str(port_file), secret],
+            str(test_program), str(port_file), secret,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    # Wait for port file to be created (telling us the server's TCP port number)
-    port = None
-    for attempt in range(100):
+    try:
+        # Wait for port file to be created (telling us the server's TCP port number)
+        port = None
+        for attempt in range(100):
+            try:
+                port = int(port_file.read_text())
+            except Exception:
+                pass
+            if port is not None:
+                break
+            await asyncio.sleep(0.05)
+
+        assert port is not None, "server subprocess did not create port file " + str(port_file)
+
+        # connect to server
+        remote_picotool_handle = await asyncio.create_subprocess_exec(
+                sys.executable, str(REMOTE_PICOTOOL),
+                "--secret", secret, "--address", SERVER_ADDRESS, "--port", str(port),
+                "info",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
-            port = int(port_file.read_text())
-        except Exception:
-            pass
-        if port is not None:
-            break
-        await asyncio.sleep(0.05)
-
-    assert port is not None
-
-    # connect to server
-    remote_picotool_handle = await asyncio.create_subprocess_exec(
-            [sys.executable, str(REMOTE_PICOTOOL),
-            "--secret", secret, "--address", SERVER_ADDRESS, "--port", str(port),
-            "info"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    (stdout_text, stderr_text) = await remote_picotool_handle.communicate()
-    rc = await remote_picotool_handle.wait()
-    assert rc == 0
-    test_program_handle.kill()
-    print(stdout_text)
-    print(stderr_text)
+            (stdout_text, stderr_text) = await remote_picotool_handle.communicate()
+            rc = await remote_picotool_handle.wait()
+            assert rc == 0
+            print(stdout_text)
+            print(stderr_text)
+        finally:
+            remote_picotool_handle.kill()
+    finally:
+        test_program_handle.kill()

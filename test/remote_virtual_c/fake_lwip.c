@@ -303,7 +303,7 @@ static err_t general_bind(int socket, const ip_addr_t *ipaddr, u16_t port) {
     rc = bind(socket, (const struct sockaddr*) &addr, sizeof(addr));
     ASSERT(rc == 0);
     socklen_t addr_len = sizeof(addr);
-    rc = getsockname(socket, &addr, &addr_len);
+    rc = getsockname(socket, (struct sockaddr*) &addr, &addr_len);
     ASSERT(rc == 0);
  
     notify_port_number(ntohs(addr.sin_port));
