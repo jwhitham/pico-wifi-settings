@@ -26,69 +26,76 @@ def temp_dir():
         temp_dir = Path(td)
         yield temp_dir
 
-@pytest.mark.asyncio
-async def test_virtual_c(temp_dir):
-    test_build_path = Path(temp_dir) / "build"
-    test_build_path.mkdir()
-    print("cmake", flush=True)
-    cmake_handle = await asyncio.create_subprocess_exec("cmake", "-DCMAKE_BUILD_DEBUG=1", str(TEST_PATH),
-        cwd=str(test_build_path))
-    rc = await cmake_handle.wait()
-    assert rc == 0
-    print("make", flush=True)
-    make_handle = await asyncio.create_subprocess_exec("make", cwd=str(test_build_path))
-    rc = await make_handle.wait()
-    assert rc == 0
+class ServerHandle:
+    def __init__(self, temp_dir):
+        self.test_build_path = Path(temp_dir) / "build"
+        self.test_program = self.test_build_path / "remote_virtual"
+        self.server_handle = None
+        self.tcp_port_file = Path(temp_dir) / "tcp_port_file"
+        self.udp_port_file = Path(temp_dir) / "udp_port_file"
+        self.tcp_port = -1
+        self.udp_port = -1
 
-    test_program = test_build_path / "remote_virtual"
-    port_file = Path(temp_dir) / "port_file"
-    secret = UPDATE_SECRET
-    assert test_program.exists()
-    assert REMOTE_PICOTOOL.exists()
+    async def start(self) -> None:
+        self.test_build_path.mkdir()
+        print("cmake", flush=True)
+        cmake_handle = await asyncio.create_subprocess_exec("cmake", "-DCMAKE_BUILD_DEBUG=1", str(TEST_PATH),
+            cwd=str(self.test_build_path))
+        rc = await cmake_handle.wait()
+        assert rc == 0
+        print("make", flush=True)
+        make_handle = await asyncio.create_subprocess_exec("make", cwd=str(self.test_build_path))
+        rc = await make_handle.wait()
+        assert rc == 0
 
-    # start server
-    print("server", flush=True)
-    test_program_handle = await asyncio.create_subprocess_exec(str(test_program), str(port_file), secret)
+        assert self.test_program.exists()
 
-    try:
+        # start server
+        print("server", flush=True)
+        self.server_handle = await asyncio.create_subprocess_exec(
+                str(self.test_program),
+                str(self.tcp_port_file),
+                str(self.udp_port_file),
+                UPDATE_SECRET)
+
+        self.tcp_port = await self.read_port_file(self.tcp_port_file)
+        self.udp_port = await self.read_port_file(self.udp_port_file)
+
+    async def read_port_file(self, file_path: Path) -> int:
         # Wait for port file to be created (telling us the server's TCP port number)
-        port = None
+        port = -1
         for attempt in range(100):
             try:
-                port = int(port_file.read_text())
+                port = int(file_path.read_text())
             except Exception:
                 pass
-            if port is not None:
-                break
+
+            if port >= 0:
+                return port
+
             await asyncio.sleep(0.05)
 
-        print("port is", port)
-        assert port is not None, "server subprocess did not create port file " + str(port_file)
+        assert False, "server subprocess did not create port file " + str(file_path)
 
-        # connect to server
-        print("remote_picotool", flush=True)
-        remote_picotool_handle = await asyncio.create_subprocess_exec(
-                sys.executable, str(REMOTE_PICOTOOL),
-                "--secret", secret, "--address", SERVER_ADDRESS, "--port", str(port),
-                "info",
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            print("communicate")
-            (stdout_bytes, stderr_bytes) = await remote_picotool_handle.communicate()
-            print("****")
-            print(stdout_bytes.decode("utf-8", errors="ignore"))
-            print("****")
-            print(stderr_bytes.decode("utf-8", errors="ignore"))
-            print("****")
-            rc = await remote_picotool_handle.wait()
-            assert rc == 0
-        finally:
-            try: 
-                remote_picotool_handle.kill()
-            except Exception:
-                pass
-    finally:
-        try: 
-            test_program_handle.kill()
-        except Exception:
-            pass
+@pytest.mark.asyncio
+async def test_virtual_c(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+
+    # connect to server
+    print("remote_picotool", flush=True)
+    remote_picotool_handle = await asyncio.create_subprocess_exec(
+            sys.executable, str(REMOTE_PICOTOOL),
+            "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
+            "--port", str(server_handle.tcp_port),
+            "info",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print("communicate")
+    (stdout_bytes, stderr_bytes) = await remote_picotool_handle.communicate()
+    print("****")
+    print(stdout_bytes.decode("utf-8", errors="ignore"))
+    print("****")
+    print(stderr_bytes.decode("utf-8", errors="ignore"))
+    print("****")
+    rc = await remote_picotool_handle.wait()
+    assert rc == 0

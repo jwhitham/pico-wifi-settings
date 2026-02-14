@@ -14,18 +14,19 @@
 #include <unistd.h>
 
 static const char* g_update_secret;
-static const char* g_port_file;
+static const char* g_tcp_port_file;
+static const char* g_udp_port_file;
 
 void panic(const char* fmt, ...) {
     fprintf(stderr, "Panic: %s\n", fmt);
     exit(1);
 }
 
-void notify_tcp_port_number(int port) {
-    if (!g_port_file) {
+static void notify_port_number(const char* port_file, int port) {
+    if (!port_file) {
         return;
     }
-    FILE* fd = fopen(g_port_file, "wt");
+    FILE* fd = fopen(port_file, "wt");
     if (!fd) {
         return;
     }
@@ -33,7 +34,12 @@ void notify_tcp_port_number(int port) {
     fclose(fd);
 }
 
+void notify_tcp_port_number(int port) {
+    notify_port_number(g_tcp_port_file, port);
+}
+
 void notify_udp_port_number(int port) {
+    notify_port_number(g_udp_port_file, port);
 }
 
 bool wifi_settings_get_value_for_key(
@@ -56,18 +62,22 @@ bool wifi_settings_get_value_for_key(
 }
 
 int main(int argc, char ** argv) {
-    if (argc != 3) {
-        fprintf(stderr, "Incorrect parameters; usage <port file name> <secret>\n");
+    if (argc != 4) {
+        fprintf(stderr, "Incorrect parameters; usage <tcp port file name> <udp port file name> <secret>\n");
         return 1;
     }
-    g_port_file = argv[1];
-    g_update_secret = argv[2];
-    printf("Port file is '%s'\n", g_port_file);
+    const char* program = argv[0];
+    g_tcp_port_file = argv[1];
+    g_udp_port_file = argv[2];
+    g_update_secret = argv[3];
+    printf("Test server is '%s'\n", program);
+    printf("TCP port file is '%s'\n", g_tcp_port_file);
+    printf("UDP port file is '%s'\n", g_udp_port_file);
     printf("Secret is '%s'\n", g_update_secret);
         
     int rc = wifi_settings_remote_init();
     ASSERT(rc == 0);
-    while(1) {
+    while(access(program, F_OK) == 0) {
         if (!fake_lwip_loop()) {
             usleep(10000);
         }
