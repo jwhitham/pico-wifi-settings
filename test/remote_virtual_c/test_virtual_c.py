@@ -83,19 +83,16 @@ async def test_virtual_c(temp_dir):
     await server_handle.start()
 
     # connect to server
-    print("remote_picotool", flush=True)
     remote_picotool_handle = await asyncio.create_subprocess_exec(
             sys.executable, str(REMOTE_PICOTOOL),
             "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
             "--port", str(server_handle.tcp_port),
             "info",
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    print("communicate")
-    (stdout_bytes, stderr_bytes) = await remote_picotool_handle.communicate()
-    print("****")
-    print(stdout_bytes.decode("utf-8", errors="ignore"))
-    print("****")
-    print(stderr_bytes.decode("utf-8", errors="ignore"))
-    print("****")
+            stdout=subprocess.PIPE)
+    (stdout_bytes, _) = await remote_picotool_handle.communicate()
+    text = stdout_bytes.decode("utf-8", errors="ignore")
+    print(text)
     rc = await remote_picotool_handle.wait()
     assert rc == 0
+    assert "123456789ABCDEF0" in text   # fake board id
+    assert "test-host-name" in text

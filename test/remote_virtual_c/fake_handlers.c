@@ -29,7 +29,7 @@ int32_t wifi_settings_pico_info_handler(
     *output_data_size = snprintf(data_buffer, *output_data_size,
         "board_id=123456789ABCDEF0\n"
         "wifi_settings_version=%s\n"
-        "name=test\n"
+        "name=test-host-name\n"
         "id_last_user_handler=%d\n"
         "max_data_size=%d\n"
         "implementation=C\n",
