@@ -295,6 +295,7 @@ static err_t general_bind(int socket, const ip_addr_t *ipaddr, u16_t port) {
             SO_REUSEADDR, &enable, sizeof(enable));
     ASSERT(rc == 0);
 
+    // We actually bind to a random port number which will be shared with the test case later
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -302,11 +303,6 @@ static err_t general_bind(int socket, const ip_addr_t *ipaddr, u16_t port) {
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     rc = bind(socket, (const struct sockaddr*) &addr, sizeof(addr));
     ASSERT(rc == 0);
-    socklen_t addr_len = sizeof(addr);
-    rc = getsockname(socket, (struct sockaddr*) &addr, &addr_len);
-    ASSERT(rc == 0);
- 
-    notify_port_number(ntohs(addr.sin_port));
 
     return ERR_OK;
 }
@@ -320,6 +316,7 @@ err_t tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port) {
 struct tcp_pcb* tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog) {
     ASSERT(pcb);
 
+    // Listen on the socket (already bound)
     struct tcp_pcb* service_pcb = &allocate_pcb()->tcp;
     ASSERT(pcb->socket >= 0);
     ASSERT(pcb->pcb_type == TCP_PORT);
@@ -328,6 +325,15 @@ struct tcp_pcb* tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog) {
     int rc = listen(service_pcb->socket, backlog);
     ASSERT(rc == 0);
     service_pcb->pcb_type = TCP_LISTEN;
+
+    // Notify the test case that the server is ready for connections (tell it the port number)
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    socklen_t addr_len = sizeof(addr);
+    rc = getsockname(service_pcb->socket, (struct sockaddr*) &addr, &addr_len);
+    ASSERT(rc == 0);
+    notify_tcp_port_number(ntohs(addr.sin_port));
+
     return service_pcb;
 }
 
@@ -379,7 +385,19 @@ struct udp_pcb* udp_new_ip_type(u8_t type) {
 err_t udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port) {
     ASSERT(pcb);
     ASSERT(pcb->pcb_type == UDP_PORT);
-    return general_bind(pcb->socket, ipaddr, port);
+    err_t err = general_bind(pcb->socket, ipaddr, port);
+    if (err != ERR_OK) {
+        return err;
+    }
+
+    // Notify the test case that the server is ready for UDP messages (tell it the port number)
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    socklen_t addr_len = sizeof(addr);
+    int rc = getsockname(pcb->socket, (struct sockaddr*) &addr, &addr_len);
+    ASSERT(rc == 0);
+    notify_udp_port_number(ntohs(addr.sin_port));
+    return err;
 }
 
 err_t udp_sendto(struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* dst_ip, u16_t dst_port) {

@@ -21,7 +21,7 @@ void panic(const char* fmt, ...) {
     exit(1);
 }
 
-void notify_port_number(int port) {
+void notify_tcp_port_number(int port) {
     if (!g_port_file) {
         return;
     }
@@ -31,6 +31,9 @@ void notify_port_number(int port) {
     }
     fprintf(fd, "%d\n", port);
     fclose(fd);
+}
+
+void notify_udp_port_number(int port) {
 }
 
 bool wifi_settings_get_value_for_key(
