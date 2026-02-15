@@ -19,7 +19,101 @@ import argparse
 import os
 
 
-class RemotePicotoolCfg(KeyValueStore):
+class BaseRemotePicotoolCfg(KeyValueStore):
+    def __init__(self) -> None:
+        """Store the remote_picotool configuration contents and provide accessors."""
+        KeyValueStore.__init__(self, b"")
+
+    @property
+    def config(self) -> str:
+        """Location of remote_picotool.cfg file (if any).
+
+        This is:
+         - the --config option on the command line
+         - the environment variable PICO_REMOTE_PICOTOOL_CFG
+         - various search locations on disk
+        """
+        return self.get_str("config")
+
+    @property
+    def port(self) -> int:
+        """Port number for connecting to Pico W.
+
+        This is:
+         - the port= option in remote_picotool.cfg
+         - the --port option on the command line
+        """
+        return self.get_int("port")
+
+    @property
+    def search_timeout(self) -> float:
+        """Timeout for searching for Pico W (seconds).
+
+        This is:
+         - the search_timeout= option in remote_picotool.cfg
+         - the --search-timeout option on the command line
+        """
+        return self.get_float("search_timeout")
+
+    @property
+    def search_interface(self) -> str:
+        """IPv4 address of interface for searching for Pico W.
+
+        This is:
+         - the search_interface= option in remote_picotool.cfg
+         - the --search-interface option on the command line
+        """
+        return self.get_str("search_interface")
+
+    @property
+    def update_secret_text(self) -> str:
+        """Update secret as text.
+
+        This is:
+         - the update_secret= option in remote_picotool.cfg (or the wifi-settings file)
+         - the --update-secret or --secret option on the command line
+         - the environment variable PICO_UPDATE_SECRET
+        """
+        return self.get_str("update_secret")
+
+    @property
+    def board_address(self) -> str:
+        """IPv4 address of Pico W.
+
+        This is:
+         - the board_address= option in remote_picotool.cfg
+         - the --board-address or --address option on the command line
+         - the environment variable PICO_ADDRESS
+        """
+        return self.get_str("board_address")
+
+    @property
+    def board_id(self) -> str:
+        """Board ID of Pico W.
+
+        This is:
+         - the board_id= option in remote_picotool.cfg
+         - the --board-id or --id option on the command line
+         - the environment variable PICO_ID
+        """
+        return self.get_str("board_id")
+
+    @property
+    def update_secret_hash(self) -> bytes:
+        """Turn the secret provided by the user into a 32-byte hash.
+
+        This is derived from:
+         - the update_secret= option in remote_picotool.cfg (or the wifi-settings file)
+         - the --update-secret or --secret option on the command line
+         - the environment variable PICO_UPDATE_SECRET
+        """
+
+        if not self.update_secret_text:
+            raise NoSecretError("No update_secret is available for the client (use --secret)")
+
+        return update_secret_hash(self.update_secret_text)
+
+class RemotePicotoolCfg(BaseRemotePicotoolCfg):
     """This represents a remote_picotool configuration, from a file, or parameters, or both."""
 
     def __init__(self, args: typing.Optional[argparse.Namespace] = None) -> None:
@@ -49,7 +143,7 @@ class RemotePicotoolCfg(KeyValueStore):
          - The value is taken from the the `remote_picotool.cfg` file
          - A default value is used e.g. 1404 for --port
         """
-        KeyValueStore.__init__(self, b"")
+        BaseRemotePicotoolCfg.__init__(self)
 
         # Use the command-line parameters provided by the caller, if any
         # The static method add_config_options() will add the options to an ArgumentParser object
@@ -156,95 +250,6 @@ class RemotePicotoolCfg(KeyValueStore):
             value = getattr(self.args, key, None)
             if value is not None:
                 self.set(key, str(value))
-
-    @property
-    def config(self) -> str:
-        """Location of remote_picotool.cfg file (if any).
-
-        This is:
-         - the --config option on the command line
-         - the environment variable PICO_REMOTE_PICOTOOL_CFG
-         - various search locations on disk
-        """
-        return self.get_str("config")
-
-    @property
-    def port(self) -> int:
-        """Port number for connecting to Pico W.
-
-        This is:
-         - the port= option in remote_picotool.cfg
-         - the --port option on the command line
-        """
-        return self.get_int("port")
-
-    @property
-    def search_timeout(self) -> float:
-        """Timeout for searching for Pico W (seconds).
-
-        This is:
-         - the search_timeout= option in remote_picotool.cfg
-         - the --search-timeout option on the command line
-        """
-        return self.get_float("search_timeout")
-
-    @property
-    def search_interface(self) -> str:
-        """IPv4 address of interface for searching for Pico W.
-
-        This is:
-         - the search_interface= option in remote_picotool.cfg
-         - the --search-interface option on the command line
-        """
-        return self.get_str("search_interface")
-
-    @property
-    def update_secret_text(self) -> str:
-        """Update secret as text.
-
-        This is:
-         - the update_secret= option in remote_picotool.cfg (or the wifi-settings file)
-         - the --update-secret or --secret option on the command line
-         - the environment variable PICO_UPDATE_SECRET
-        """
-        return self.get_str("update_secret")
-
-    @property
-    def board_address(self) -> str:
-        """IPv4 address of Pico W.
-
-        This is:
-         - the board_address= option in remote_picotool.cfg
-         - the --board-address or --address option on the command line
-         - the environment variable PICO_ADDRESS
-        """
-        return self.get_str("board_address")
-
-    @property
-    def board_id(self) -> str:
-        """Board ID of Pico W.
-
-        This is:
-         - the board_id= option in remote_picotool.cfg
-         - the --board-id or --id option on the command line
-         - the environment variable PICO_ID
-        """
-        return self.get_str("board_id")
-
-    @property
-    def update_secret_hash(self) -> bytes:
-        """Turn the secret provided by the user into a 32-byte hash.
-
-        This is derived from:
-         - the update_secret= option in remote_picotool.cfg (or the wifi-settings file)
-         - the --update-secret or --secret option on the command line
-         - the environment variable PICO_UPDATE_SECRET
-        """
-
-        if not self.update_secret_text:
-            raise NoSecretError("No update_secret is available for the client (use --secret)")
-
-        return update_secret_hash(self.update_secret_text)
 
 class WifiSettingsFile(KeyValueStore):
     """This represents information in a wifi-settings file."""

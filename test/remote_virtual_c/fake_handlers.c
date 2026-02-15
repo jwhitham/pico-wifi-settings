@@ -32,7 +32,7 @@ int32_t wifi_settings_pico_info_handler(
         "name=test-host-name\n"
         "id_last_user_handler=%d\n"
         "max_data_size=%d\n"
-        "implementation=C\n",
+        "implementation=TestC\n",
         WIFI_SETTINGS_VERSION_STRING,
         ID_LAST_USER_HANDLER,
         MAX_DATA_SIZE);

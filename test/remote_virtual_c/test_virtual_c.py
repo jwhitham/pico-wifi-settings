@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import wifi_settings
+from wifi_settings import remote_picotool
 
 UPDATE_SECRET = "OWL001"
 SERVER_ADDRESS = "127.0.0.1"
@@ -35,6 +37,7 @@ class ServerHandle:
         self.udp_port_file = Path(temp_dir) / "udp_port_file"
         self.tcp_port = -1
         self.udp_port = -1
+        self.config = remote_picotool.BaseRemotePicotoolCfg()
 
     async def start(self) -> None:
         self.test_build_path.mkdir()
@@ -61,6 +64,10 @@ class ServerHandle:
         self.tcp_port = await self.read_port_file(self.tcp_port_file)
         self.udp_port = await self.read_port_file(self.udp_port_file)
 
+        self.config.set("update_secret", UPDATE_SECRET)
+        self.config.set("board_address", SERVER_ADDRESS)
+        self.config.set("port", str(self.tcp_port))
+
     async def read_port_file(self, file_path: Path) -> int:
         # Wait for port file to be created (telling us the server's TCP port number)
         port = -1
@@ -82,6 +89,19 @@ async def test_virtual_c(temp_dir):
     server_handle = ServerHandle(temp_dir)
     await server_handle.start()
 
+    print("Connecting", flush=True)
+    reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
+    client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
+
+    # Test - info dump
+    print("Test INFO handler", flush=True)
+    (result_data, result_value) = await client.run(wifi_settings.ID_PICO_INFO_HANDLER)
+    pico_info = wifi_settings.PicoInfo(result_data)
+    assert pico_info.get_str("implementation") == "TestC"
+    assert pico_info.board_id == "123456789ABCDEF0"
+    assert pico_info.name == "test-host-name"
+    assert pico_info.max_data_size >= 1024
+    """
     # connect to server
     remote_picotool_handle = await asyncio.create_subprocess_exec(
             sys.executable, str(REMOTE_PICOTOOL),
@@ -94,5 +114,5 @@ async def test_virtual_c(temp_dir):
     print(text)
     rc = await remote_picotool_handle.wait()
     assert rc == 0
-    assert "123456789ABCDEF0" in text   # fake board id
     assert "test-host-name" in text
+    """
