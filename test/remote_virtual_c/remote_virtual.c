@@ -78,6 +78,8 @@ int main(int argc, char ** argv) {
     int rc = wifi_settings_remote_init();
     ASSERT(rc == 0);
 
+    register_handlers();
+
     // Server will shut down when the executable is deleted
     while(access(program, F_OK) == 0) {
         if (!fake_lwip_loop()) {

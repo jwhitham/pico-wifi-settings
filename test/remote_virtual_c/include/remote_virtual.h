@@ -5,11 +5,15 @@
 #error "THIS HEADER IS FOR REMOTE VIRTUAL TESTING ONLY"
 #endif
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #define ASSERT(truth) \
     if (!(truth)) { fprintf(stderr, "Assert failed at %s:%u -> %s\n", \
         __FILE__, __LINE__, #truth); exit(1); }
 
 void notify_tcp_port_number(int port);
 void notify_udp_port_number(int port);
+void register_handlers(void);
 
 #endif

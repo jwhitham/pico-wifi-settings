@@ -22,9 +22,9 @@ PICO_WIFI_SETTINGS_ROOT_PATH = Path(__file__).parent.parent.parent.absolute()
 TEST_PATH = PICO_WIFI_SETTINGS_ROOT_PATH / "test" / "remote_virtual_c"
 REMOTE_PICOTOOL = PICO_WIFI_SETTINGS_ROOT_PATH / "remote_picotool"
 
-ID_TEST_HANDLER_1 = wifi_settings.ID_FIRST_USER_HANDLER + 1
-ID_TEST_HANDLER_2 = wifi_settings.ID_FIRST_USER_HANDLER + 2
-ID_TEST_HANDLER_3 = wifi_settings.ID_FIRST_USER_HANDLER + 3
+ID_TEST_HANDLER_ECHO_XOR_COUNT = (wifi_settings.ID_FIRST_USER_HANDLER + 0)
+ID_TEST_HANDLER_GEN_OUTPUT     = (wifi_settings.ID_FIRST_USER_HANDLER + 1)
+ID_TEST_HANDLER_BOUNDS_CHECK   = (wifi_settings.ID_FIRST_USER_HANDLER + 2)
 
 @pytest.fixture
 def temp_dir():
@@ -126,11 +126,11 @@ async def test_out_of_range_data_1(temp_dir):
             size = max_data_size + 1
             parameter = -size
             request_data = bytearray(size)
-            (result_data, result_value) = await client.run(ID_TEST_HANDLER_1, request_data, parameter)
+            (result_data, result_value) = await client.run(ID_TEST_HANDLER_ECHO_XOR_COUNT, request_data, parameter)
             raise Exception()
         except wifi_settings.BadParameterError:
             print("OK")
 
         writer.close()
         await writer.wait_closed()
-        
+    assert False        

@@ -31,7 +31,7 @@ add_executable(remote_virtual
         ${CMAKE_CURRENT_LIST_DIR}/remote_virtual.c
         ${CMAKE_CURRENT_LIST_DIR}/fake_mbedtls.c
         ${CMAKE_CURRENT_LIST_DIR}/fake_lwip.c
-        ${CMAKE_CURRENT_LIST_DIR}/fake_handlers.c
+        ${CMAKE_CURRENT_LIST_DIR}/handlers.c
         ${CMAKE_CURRENT_LIST_DIR}/../../src/wifi_settings_remote.c
     )
 target_link_libraries(remote_virtual crypto)
