@@ -85,6 +85,10 @@ class PicoInfo(KeyValueStore):
         return self.get_str("name")
 
     @property
+    def implementation(self) -> str:
+        return self.get_str("implementation")
+
+    @property
     def revision(self) -> int:
         return self.sysinfo_chip_id >> 28
 

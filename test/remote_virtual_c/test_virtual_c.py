@@ -22,6 +22,10 @@ PICO_WIFI_SETTINGS_ROOT_PATH = Path(__file__).parent.parent.parent.absolute()
 TEST_PATH = PICO_WIFI_SETTINGS_ROOT_PATH / "test" / "remote_virtual_c"
 REMOTE_PICOTOOL = PICO_WIFI_SETTINGS_ROOT_PATH / "remote_picotool"
 
+ID_TEST_HANDLER_1 = wifi_settings.ID_FIRST_USER_HANDLER + 1
+ID_TEST_HANDLER_2 = wifi_settings.ID_FIRST_USER_HANDLER + 2
+ID_TEST_HANDLER_3 = wifi_settings.ID_FIRST_USER_HANDLER + 3
+
 @pytest.fixture
 def temp_dir():
     with tempfile.TemporaryDirectory() as td:
@@ -85,34 +89,48 @@ class ServerHandle:
         assert False, "server subprocess did not create port file " + str(file_path)
 
 @pytest.mark.asyncio
-async def test_virtual_c(temp_dir):
+async def test_info(temp_dir):
     server_handle = ServerHandle(temp_dir)
     await server_handle.start()
 
-    print("Connecting", flush=True)
     reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
     client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
 
     # Test - info dump
-    print("Test INFO handler", flush=True)
     (result_data, result_value) = await client.run(wifi_settings.ID_PICO_INFO_HANDLER)
     pico_info = wifi_settings.PicoInfo(result_data)
     assert pico_info.get_str("implementation") == "TestC"
     assert pico_info.board_id == "123456789ABCDEF0"
     assert pico_info.name == "test-host-name"
     assert pico_info.max_data_size >= 1024
-    """
-    # connect to server
-    remote_picotool_handle = await asyncio.create_subprocess_exec(
-            sys.executable, str(REMOTE_PICOTOOL),
-            "--secret", UPDATE_SECRET, "--address", SERVER_ADDRESS,
-            "--port", str(server_handle.tcp_port),
-            "info",
-            stdout=subprocess.PIPE)
-    (stdout_bytes, _) = await remote_picotool_handle.communicate()
-    text = stdout_bytes.decode("utf-8", errors="ignore")
-    print(text)
-    rc = await remote_picotool_handle.wait()
-    assert rc == 0
-    assert "test-host-name" in text
-    """
+
+@pytest.mark.asyncio
+async def test_out_of_range_data_1(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+
+    # get max_data_size
+    reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
+    client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
+    (result_data, result_value) = await client.run(wifi_settings.ID_PICO_INFO_HANDLER)
+    max_data_size = wifi_settings.PicoInfo(result_data).max_data_size
+    writer.close()
+    await writer.wait_closed()
+
+    # Test - out of range data sizes
+    for size in [max_data_size + 1, -1, max_data_size + (1 << 32)]:
+        reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
+        client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
+        try:
+            print("out of range data size", size, " ", end="", flush=True)
+            size = max_data_size + 1
+            parameter = -size
+            request_data = bytearray(size)
+            (result_data, result_value) = await client.run(ID_TEST_HANDLER_1, request_data, parameter)
+            raise Exception()
+        except wifi_settings.BadParameterError:
+            print("OK")
+
+        writer.close()
+        await writer.wait_closed()
+        
