@@ -147,7 +147,10 @@ async def test_echo_xor_count(temp_dir):
     (client, writer, max_data_size) = await connect(server_handle.config)
 
     # Test - sending and receiving data of various sizes
-    sizes = [16, 1, 15, 17, 0, 500, 511, 513, max_data_size, max_data_size - 1]
+    sizes = [16, 1, 15, 17, 0, 500, 511, 513,
+            max_data_size // 2,
+            (max_data_size // 2) + 1,
+            max_data_size, max_data_size - 1]
     for size in sizes:
         assert size <= max_data_size
         parameter = -size

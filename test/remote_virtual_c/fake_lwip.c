@@ -204,20 +204,16 @@ static bool process_read(struct tcp_pcb* pcb) {
 static bool process_write(struct tcp_pcb* pcb) {
     uint16_t size = pcb->outstanding_write_size;
     if (size > 0) {
+        pcb->outstanding_write_size = 0;
         ASSERT(pcb->callbacks.sent);
         if (pcb->callbacks.sent(
                 pcb->callbacks.arg, pcb,
                 size) != ERR_OK) {
             tcp_close(pcb);
         }
-        if (pcb->pcb_type == FREE) {
-            // closed - pcb is reset
-            ASSERT(pcb->outstanding_write_size == 0);
-        } else {
+        if (pcb->pcb_type != FREE) {
             // still open
             ASSERT(pcb->pcb_type == TCP_ACTIVE);
-            ASSERT(pcb->outstanding_write_size >= size);
-            pcb->outstanding_write_size -= size;
         }
         return true;
     }
