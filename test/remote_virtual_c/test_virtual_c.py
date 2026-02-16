@@ -39,18 +39,16 @@ def temp_dir():
 class ServerHandle:
     def __init__(self, temp_dir):
         self.test_build_path = Path(temp_dir) / "build"
+        self.test_run_path = Path(temp_dir)
         self.test_program = self.test_build_path / "remote_virtual"
         self.server_handle = None
-        self.tcp_port_file = Path(temp_dir) / "tcp_port_file"
-        self.udp_port_file = Path(temp_dir) / "udp_port_file"
         self.tcp_port = -1
-        self.udp_port = -1
         self.config = remote_picotool.BaseRemotePicotoolCfg()
 
     async def start(self) -> None:
         self.test_build_path.mkdir()
         print("cmake", flush=True)
-        cmake_handle = await asyncio.create_subprocess_exec("cmake", "-DCMAKE_BUILD_DEBUG=1", str(TEST_PATH),
+        cmake_handle = await asyncio.create_subprocess_exec("cmake", "-DCMAKE_BUILD_TYPE=Debug", str(TEST_PATH),
             cwd=str(self.test_build_path))
         rc = await cmake_handle.wait()
         assert rc == 0
@@ -64,33 +62,33 @@ class ServerHandle:
         # start server
         print("server", flush=True)
         self.server_handle = await asyncio.create_subprocess_exec(
-                str(self.test_program),
-                str(self.tcp_port_file),
-                str(self.udp_port_file),
-                UPDATE_SECRET)
+                str(self.test_program), UPDATE_SECRET, cwd=str(self.test_run_path))
 
-        self.tcp_port = await self.read_port_file(self.tcp_port_file)
-        self.udp_port = await self.read_port_file(self.udp_port_file)
+        # Wait for server start
+        self.tcp_port = await self.read_port_file("tcp_listen_*")
+
 
         self.config.set("update_secret", UPDATE_SECRET)
         self.config.set("board_address", SERVER_ADDRESS)
         self.config.set("port", str(self.tcp_port))
 
-    async def read_port_file(self, file_path: Path) -> int:
-        # Wait for port file to be created (telling us the server's TCP port number)
+    async def read_port_file(self, search: str) -> int:
+        # Wait for port file to be created (telling us the server's port number)
+        # Expecting a file named something like "tcp_listen_41234" where the final
+        # characters are the 16-bit port number in decimal format.
         port = -1
         for attempt in range(100):
-            try:
-                port = int(file_path.read_text())
-            except Exception:
-                pass
-
-            if port >= 0:
-                return port
+            for found in self.test_run_path.glob(search):
+                suffix = found.name.rpartition("_")[2]
+                print(found.name)
+                try:
+                    return int(suffix, 10)
+                except Exception:
+                    pass
 
             await asyncio.sleep(0.05)
 
-        assert False, "server subprocess did not create port file " + str(file_path)
+        assert False, "server subprocess did not create port file " + search
 
 @pytest.mark.asyncio
 async def test_info(temp_dir):
@@ -153,7 +151,7 @@ async def test_echo_xor_count(temp_dir):
     for size in sizes:
         assert size <= max_data_size
         parameter = -size
-        print("test_handler_echo_xor_count", size, parameter, end="", flush=True)
+        print("test_handler_echo_xor_count", size, parameter, flush=True)
         request_data = bytearray(os.urandom(size))
         expected_result_data = bytearray(size)
         expected_result = -10
@@ -162,13 +160,13 @@ async def test_echo_xor_count(temp_dir):
                 expected_result -= 1
             expected_result_data[i] = request_data[i] ^ 0xac
 
-        print(", sending", end="", flush=True)
+        print("sending", flush=True)
         (result_data, result_value) = await client.run(ID_TEST_HANDLER_ECHO_XOR_COUNT, request_data, parameter)
-        print(", checking", len(result_data), result_value, end="")
+        print("checking", len(result_data), result_value)
         assert result_value == expected_result
         assert len(result_data) == size
         assert result_data == bytes(expected_result_data)
-        print(", OK", flush=True)
+        print("OK", flush=True)
 
     writer.close()
     await writer.wait_closed()

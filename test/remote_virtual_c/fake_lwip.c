@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -56,6 +57,8 @@ struct tcp_pcb {
     struct tcp_callbacks_t callbacks;
     uint16_t outstanding_write_size;
     uint16_t received_size;
+    int debug_send_fd;
+    int debug_recv_fd;
 };
 
 struct udp_pcb {
@@ -74,6 +77,7 @@ union general_pcb {
 static union general_pcb g_pcbs[NUM_PCBS];
 static struct pbuf g_pbufs[NUM_PBUFS];
 static unsigned g_cyw43_arch_lwip_count;
+static unsigned g_accept_count;
 
 static union general_pcb* allocate_pcb() {
     for (uint32_t i = 0; i < NUM_PCBS; i++) {
@@ -135,6 +139,16 @@ static bool process_listen(struct tcp_pcb* pcb) {
         a_pcb->socket = a_socket;
         ASSERT(pcb->callbacks.accept);
         memcpy(&a_pcb->callbacks, &pcb->callbacks, sizeof(struct tcp_callbacks_t));
+
+        // Debug - all data sent/received is logged
+        g_accept_count++;
+        char log_name[32];
+        snprintf(log_name, sizeof(log_name), "tcp_recv_%u", g_accept_count);
+        a_pcb->debug_recv_fd = open(log_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        snprintf(log_name, sizeof(log_name), "tcp_send_%u", g_accept_count);
+        a_pcb->debug_send_fd = open(log_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+        // Pass accept call to software under test
         if (pcb->callbacks.accept(
                 pcb->callbacks.arg, a_pcb, ERR_OK) != ERR_OK) {
             tcp_close(a_pcb);
@@ -158,10 +172,20 @@ static bool process_read(struct tcp_pcb* pcb) {
             // Data received
             ASSERT(pcb->callbacks.recv);
             ASSERT(rc <= sizeof(buffer));
+
+            // Copy to pbuf
             struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, rc, PBUF_RAM);
             ASSERT(p->payload);    // pbuf payload should have been allocated
             ASSERT(p->len == rc);
             memcpy(p->payload, buffer, p->len);
+
+            // Log data to file
+            if (pcb->debug_recv_fd >= 0) {
+                ssize_t check = write(pcb->debug_recv_fd, p->payload, p->len);
+                ASSERT(check == (ssize_t) p->len);
+            }
+
+            // Pass onwards to software under test
             pcb->received_size = 0;
             if (pcb->callbacks.recv(
                     pcb->callbacks.arg, pcb, p, ERR_OK) != ERR_OK) {
@@ -232,11 +256,46 @@ bool fake_lwip_loop() {
     return activity;
 }
 
+static void notify_port_number(int socket, bool is_tcp, bool is_listening) {
+    // Notify the test case that a port has been opened for listening (is_listening = true)
+    // or closed (is_listening = false). The port may be TCP (is_tcp = true) or UDP (is_tcp = false).
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    socklen_t addr_len = sizeof(addr);
+    int rc = getsockname(socket, (struct sockaddr*) &addr, &addr_len);
+    ASSERT(rc == 0);
+
+    char notify_name[32];
+    snprintf(notify_name, sizeof(notify_name), "%s_listen_%u", is_tcp ? "tcp" : "udp", ntohs(addr.sin_port));
+    if (is_listening) {
+        // File created with port number in the name
+        int fd = open(notify_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            close(fd);
+        }
+    } else {
+        // File deleted
+        unlink(notify_name);
+    }
+}
+
 void tcp_abort(struct tcp_pcb *pcb) {
     ASSERT(pcb);
+    if (pcb->debug_recv_fd >= 0) {
+        close(pcb->debug_recv_fd);
+        pcb->debug_recv_fd = -1;
+    }
+    if (pcb->debug_send_fd >= 0) {
+        close(pcb->debug_send_fd);
+        pcb->debug_send_fd = -1;
+    }
     if (pcb->socket >= 0) {
         if (pcb->pcb_type == TCP_ACTIVE) {
             shutdown(pcb->socket, SHUT_RDWR);
+        }
+        if (pcb->pcb_type == TCP_LISTEN) {
+            notify_port_number(pcb->socket, true, false);
         }
         close(pcb->socket);
         pcb->socket = -1;
@@ -272,6 +331,11 @@ err_t tcp_write(struct tcp_pcb *pcb, const void *dataptr, u16_t len, u8_t apifla
     ssize_t check = write(pcb->socket, dataptr, len);
     ASSERT(check == len);
     pcb->outstanding_write_size += len;
+
+    if (pcb->debug_send_fd >= 0) {
+        check = write(pcb->debug_send_fd, dataptr, len);
+        ASSERT(check == len);
+    }
     return ERR_OK;
 }
 
@@ -282,6 +346,8 @@ struct tcp_pcb* tcp_new_ip_type(u8_t type) {
     pcb->socket = socket(AF_INET, SOCK_STREAM, 0);
     ASSERT(pcb->socket >= 0);
     pcb->pcb_type = TCP_PORT;
+    pcb->debug_recv_fd = -1;
+    pcb->debug_send_fd = -1;
     return pcb;
 }
 
@@ -322,17 +388,14 @@ struct tcp_pcb* tcp_listen_with_backlog(struct tcp_pcb *pcb, u8_t backlog) {
     ASSERT(pcb->pcb_type == TCP_PORT);
     service_pcb->socket = pcb->socket;
     pcb->socket = -1;
+    pcb->debug_recv_fd = -1;
+    pcb->debug_send_fd = -1;
     int rc = listen(service_pcb->socket, backlog);
     ASSERT(rc == 0);
     service_pcb->pcb_type = TCP_LISTEN;
 
     // Notify the test case that the server is ready for connections (tell it the port number)
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    socklen_t addr_len = sizeof(addr);
-    rc = getsockname(service_pcb->socket, (struct sockaddr*) &addr, &addr_len);
-    ASSERT(rc == 0);
-    notify_tcp_port_number(ntohs(addr.sin_port));
+    notify_port_number(service_pcb->socket, true, true);
 
     return service_pcb;
 }
@@ -391,12 +454,7 @@ err_t udp_bind(struct udp_pcb* pcb, const ip_addr_t* ipaddr, u16_t port) {
     }
 
     // Notify the test case that the server is ready for UDP messages (tell it the port number)
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    socklen_t addr_len = sizeof(addr);
-    int rc = getsockname(pcb->socket, (struct sockaddr*) &addr, &addr_len);
-    ASSERT(rc == 0);
-    notify_udp_port_number(ntohs(addr.sin_port));
+    notify_port_number(pcb->socket, false, true);
     return err;
 }
 

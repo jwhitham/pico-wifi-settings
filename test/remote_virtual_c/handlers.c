@@ -56,6 +56,7 @@ int32_t test_handler_echo_xor_count(
         data_buffer[i] ^= 0xac;
     }
     *output_data_size = input_data_size;
+    printf("test_handler_echo_xor_count: return %d\n", value);
     return value;
 }
 
