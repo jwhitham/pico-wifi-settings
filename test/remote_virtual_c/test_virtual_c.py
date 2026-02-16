@@ -8,9 +8,11 @@
 
 import asyncio
 import pytest
+import os
 import subprocess
 import sys
 import tempfile
+import typing
 from pathlib import Path
 import wifi_settings
 from wifi_settings import remote_picotool
@@ -25,6 +27,8 @@ REMOTE_PICOTOOL = PICO_WIFI_SETTINGS_ROOT_PATH / "remote_picotool"
 ID_TEST_HANDLER_ECHO_XOR_COUNT = (wifi_settings.ID_FIRST_USER_HANDLER + 0)
 ID_TEST_HANDLER_GEN_OUTPUT     = (wifi_settings.ID_FIRST_USER_HANDLER + 1)
 ID_TEST_HANDLER_BOUNDS_CHECK   = (wifi_settings.ID_FIRST_USER_HANDLER + 2)
+INT_MIN = -0x80000000
+INT_MAX = 0x7fffffff
 
 @pytest.fixture
 def temp_dir():
@@ -104,16 +108,20 @@ async def test_info(temp_dir):
     assert pico_info.name == "test-host-name"
     assert pico_info.max_data_size >= 1024
 
-@pytest.mark.asyncio
-async def test_out_of_range_data_1(temp_dir):
-    server_handle = ServerHandle(temp_dir)
-    await server_handle.start()
-
-    # get max_data_size
-    reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
-    client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
+async def connect(config: remote_picotool.BaseRemotePicotoolCfg) -> typing.Tuple[
+                remote_picotool.Client, asyncio.StreamWriter, int]:
+    # Make a new connection to the server and get the max_data_size
+    reader, writer = await remote_picotool.get_pico_connection(config)
+    client = remote_picotool.Client(config.update_secret_hash, reader, writer)
     (result_data, result_value) = await client.run(wifi_settings.ID_PICO_INFO_HANDLER)
     max_data_size = wifi_settings.PicoInfo(result_data).max_data_size
+    return (client, writer, max_data_size)
+
+@pytest.mark.asyncio
+async def test_out_of_range_data(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+    (client, writer, max_data_size) = await connect(server_handle.config)
     writer.close()
     await writer.wait_closed()
 
@@ -133,4 +141,112 @@ async def test_out_of_range_data_1(temp_dir):
 
         writer.close()
         await writer.wait_closed()
-    assert False        
+
+@pytest.mark.asyncio
+async def test_echo_xor_count(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+    (client, writer, max_data_size) = await connect(server_handle.config)
+
+    # Test - sending and receiving data of various sizes
+    sizes = [16, 1, 15, 17, 0, 500, 511, 513, max_data_size, max_data_size - 1]
+    for size in sizes:
+        assert size <= max_data_size
+        parameter = -size
+        print("test_handler_echo_xor_count", size, parameter, end="", flush=True)
+        request_data = bytearray(os.urandom(size))
+        expected_result_data = bytearray(size)
+        expected_result = -10
+        for i in range(size):
+            if request_data[i] == 0x41:
+                expected_result -= 1
+            expected_result_data[i] = request_data[i] ^ 0xac
+
+        print(", sending", end="", flush=True)
+        (result_data, result_value) = await client.run(ID_TEST_HANDLER_ECHO_XOR_COUNT, request_data, parameter)
+        print(", checking", len(result_data), result_value, end="")
+        assert result_value == expected_result
+        assert len(result_data) == size
+        assert result_data == bytes(expected_result_data)
+        print(", OK", flush=True)
+
+    writer.close()
+    await writer.wait_closed()
+
+@pytest.mark.asyncio
+async def test_gen_output(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+    (client, writer, max_data_size) = await connect(server_handle.config)
+
+    # Test - receiving more data than was sent
+    sizes = [16, 1, 15, 17, 0, 500, 511, 513, max_data_size, max_data_size - 1,
+            -1, max_data_size + 1, INT_MIN, INT_MAX]
+    for parameter in sizes:
+        size = 0
+        print("test_handler_gen_output", size, parameter, end="", flush=True)
+        expected_result = parameter ^ 1
+        request_data = bytearray(0)
+        if parameter < 0:
+            expected_result_data = bytearray(0)
+        elif parameter < max_data_size:
+            expected_result_data = bytearray(parameter)
+        else:
+            expected_result_data = bytearray(max_data_size)
+        for i in range(len(expected_result_data)):
+            expected_result_data[i] = (i + 1) & 0xff
+
+        print(", sending", end="", flush=True)
+        (result_data, result_value) = await client.run(ID_TEST_HANDLER_GEN_OUTPUT, request_data, parameter)
+        print(", checking", len(result_data), result_value, end="")
+        assert result_value == expected_result
+        assert len(result_data) == len(expected_result_data)
+        assert result_data == bytes(expected_result_data)
+        print(", OK", flush=True)
+
+    writer.close()
+    await writer.wait_closed()
+
+@pytest.mark.asyncio
+async def test_bounds_check(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+    (client, writer, max_data_size) = await connect(server_handle.config)
+
+    # Test - edge cases for parameters and result values
+    for (parameter, expected_result) in {
+            INT_MIN: -1,
+            INT_MAX: -2,
+            0: -3,
+            -1: INT_MIN,
+            -2: INT_MAX,
+            -3: INT_MIN, # INT_MAX + 1 truncated
+            -4: INT_MAX, # INT_MIN - 1 truncated
+            -5: 0x789abcde, # truncated
+            1: -4,
+    }.items():
+        size = 0
+        print("test_handler_bounds_check", size, parameter, end="", flush=True)
+        request_data = bytearray(0)
+        print(", sending", end="", flush=True)
+        (result_data, result_value) = await client.run(ID_TEST_HANDLER_BOUNDS_CHECK, request_data, parameter)
+        print(", checking", len(result_data), result_value, end="")
+        assert result_value == expected_result
+        assert len(result_data) == 0
+        print(", OK", flush=True)
+
+    # Test - input data size is transferred precisely
+    for size in [1, 123, max_data_size]:
+        parameter = size
+        print("test_handler_bounds_check", size, parameter, end="", flush=True)
+        request_data = bytearray(size)
+        expected_result = -3
+        print(", sending", end="", flush=True)
+        (result_data, result_value) = await client.run(ID_TEST_HANDLER_BOUNDS_CHECK, request_data, parameter)
+        print(", checking", len(result_data), result_value, end="")
+        assert result_value == expected_result, (result_value, expected_result)
+        assert len(result_data) == 0
+        print(", OK", flush=True)
+
+    writer.close()
+    await writer.wait_closed()
