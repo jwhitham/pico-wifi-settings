@@ -128,7 +128,7 @@ async def test_out_of_range_data(temp_dir):
         reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
         client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
         try:
-            print("out of range data size", size, " ", end="", flush=True)
+            print("out of range data size", size, flush=True)
             size = max_data_size + 1
             parameter = -size
             request_data = bytearray(size)
@@ -154,7 +154,7 @@ async def test_echo_xor_count(temp_dir):
     for size in sizes:
         assert size <= max_data_size
         parameter = -size
-        print("test_handler_echo_xor_count", size, parameter, flush=True)
+        print("test_echo_xor_count", size, parameter, flush=True)
         request_data = bytearray(os.urandom(size))
         expected_result_data = bytearray(size)
         expected_result = -10
@@ -185,7 +185,7 @@ async def test_gen_output(temp_dir):
             -1, max_data_size + 1, INT_MIN, INT_MAX]
     for parameter in sizes:
         size = 0
-        print("test_handler_gen_output", size, parameter, end="", flush=True)
+        print("test_gen_output", size, parameter, flush=True)
         expected_result = parameter ^ 1
         request_data = bytearray(0)
         if parameter < 0:
@@ -197,13 +197,16 @@ async def test_gen_output(temp_dir):
         for i in range(len(expected_result_data)):
             expected_result_data[i] = (i + 1) & 0xff
 
-        print(", sending", end="", flush=True)
+        print("sending", flush=True)
         (result_data, result_value) = await client.run(ID_TEST_HANDLER_GEN_OUTPUT, request_data, parameter)
-        print(", checking", len(result_data), result_value, end="")
+        print("checking: len(result_data) = {} expected {}".format(
+                len(result_data), len(expected_result_data)))
+        print("checking: result_value = {} expected {}".format(
+                result_value, expected_result))
         assert result_value == expected_result
         assert len(result_data) == len(expected_result_data)
         assert result_data == bytes(expected_result_data)
-        print(", OK", flush=True)
+        print("OK", flush=True)
 
     writer.close()
     await writer.wait_closed()
@@ -227,27 +230,25 @@ async def test_bounds_check(temp_dir):
             1: -4,
     }.items():
         size = 0
-        print("test_handler_bounds_check", size, parameter, end="", flush=True)
+        print("test_bounds_check (part 1)", size, parameter, flush=True)
         request_data = bytearray(0)
-        print(", sending", end="", flush=True)
         (result_data, result_value) = await client.run(ID_TEST_HANDLER_BOUNDS_CHECK, request_data, parameter)
-        print(", checking", len(result_data), result_value, end="")
+        print("checking", len(result_data), result_value)
         assert result_value == expected_result
         assert len(result_data) == 0
-        print(", OK", flush=True)
+        print("OK", flush=True)
 
     # Test - input data size is transferred precisely
     for size in [1, 123, max_data_size]:
         parameter = size
-        print("test_handler_bounds_check", size, parameter, end="", flush=True)
+        print("test_bounds_check (part 2)", size, parameter, flush=True)
         request_data = bytearray(size)
         expected_result = -3
-        print(", sending", end="", flush=True)
         (result_data, result_value) = await client.run(ID_TEST_HANDLER_BOUNDS_CHECK, request_data, parameter)
-        print(", checking", len(result_data), result_value, end="")
+        print("checking", len(result_data), result_value, flush=True)
         assert result_value == expected_result, (result_value, expected_result)
         assert len(result_data) == 0
-        print(", OK", flush=True)
+        print("OK", flush=True)
 
     writer.close()
     await writer.wait_closed()

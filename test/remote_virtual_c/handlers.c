@@ -74,14 +74,18 @@ int32_t test_handler_gen_output(
     ASSERT(msg_type == ID_TEST_HANDLER_GEN_OUTPUT);
     ASSERT(arg == g_expected_arg_address);
     ASSERT(*output_data_size == MAX_DATA_SIZE);
-    ASSERT(input_data_size <= MAX_DATA_SIZE);
+    ASSERT(input_data_size == 0);
 
-    if ((0 < input_parameter) && (input_parameter <= MAX_DATA_SIZE)) {
-        for (uint32_t i = 0; i < input_data_size; i++) {
-            data_buffer[i] = (uint8_t) (i + 1);
-        }
+    if (input_parameter > MAX_DATA_SIZE) {
+        *output_data_size = MAX_DATA_SIZE;
+    } else if (input_parameter <= 0) {
+        *output_data_size = 0;
+    } else {
+        *output_data_size = (uint32_t) input_parameter;
     }
-    *output_data_size = input_data_size;
+    for (uint32_t i = 0; i < *output_data_size; i++) {
+        data_buffer[i] = (uint8_t) (i + 1);
+    }
     return input_parameter ^ 1;
 }
 
