@@ -9,7 +9,6 @@
 import asyncio
 import pytest
 import os
-import subprocess
 import sys
 import tempfile
 import typing
@@ -252,3 +251,45 @@ async def test_bounds_check(temp_dir):
 
     writer.close()
     await writer.wait_closed()
+
+def create_remote_picotool_subprocess_args(server_handle: ServerHandle) -> typing.List[str]:
+    return [sys.executable,
+            str(PICO_WIFI_SETTINGS_ROOT_PATH / "remote_picotool"),
+            "--board-address", SERVER_ADDRESS,
+            "--port", str(server_handle.tcp_port),
+            "--update-secret", UPDATE_SECRET,
+            ]
+
+@pytest.mark.asyncio
+async def test_info_via_subprocess(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+
+    make_handle = await asyncio.create_subprocess_exec(
+            *create_remote_picotool_subprocess_args(server_handle),
+            "info",
+            stdout=asyncio.subprocess.PIPE)
+    (stdout, _) = await make_handle.communicate()
+    assert make_handle.returncode == 0
+    stdout_text = stdout.decode()
+    print(stdout_text)
+    assert "123456789ABCDEF0" in stdout_text
+    assert "test-host-name" in stdout_text
+
+@pytest.mark.asyncio
+async def test_ota_via_subprocess(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+
+    test_data = os.urandom(9753)
+    ota_send_file = temp_dir / "ota_send.bin"
+    ota_send_file.write_bytes(test_data)
+
+    make_handle = await asyncio.create_subprocess_exec(
+            *create_remote_picotool_subprocess_args(server_handle),
+            "ota", str(ota_send_file),
+            stdout=asyncio.subprocess.PIPE)
+    (stdout, _) = await make_handle.communicate()
+    stdout_text = stdout.decode()
+    print(stdout_text)
+    assert make_handle.returncode == 0

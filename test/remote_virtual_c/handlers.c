@@ -19,12 +19,19 @@
 #error "ENABLE_REMOTE_UPDATE must be enabled"
 #endif
 
-static char g_expected_arg_address[1];
-
 #define ID_TEST_HANDLER_ECHO_XOR_COUNT  (ID_FIRST_USER_HANDLER + 0)
 #define ID_TEST_HANDLER_GEN_OUTPUT      (ID_FIRST_USER_HANDLER + 1)
 #define ID_TEST_HANDLER_BOUNDS_CHECK    (ID_FIRST_USER_HANDLER + 2)
 
+#define FAKE_FLASH_SECTOR_SIZE          (MAX_DATA_SIZE / 2)
+
+#define FAKE_FLASH_PROGRAM_START        (MAX_DATA_SIZE * 8)
+#define FAKE_FLASH_REUSABLE_START       (MAX_DATA_SIZE * 10)
+#define FAKE_FLASH_WIFI_SETTINGS_START  (MAX_DATA_SIZE * 14)
+#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 16)
+
+static char g_expected_arg_address[1];
+static char g_fake_flash[FAKE_FLASH_WIFI_SETTINGS_START - FAKE_FLASH_REUSABLE_START];
 
 // This test handler echoes the input back, XOR'ing it with a constant 0xac.
 // The input parameter is expected to be -input_data_size.
@@ -141,15 +148,27 @@ int32_t wifi_settings_pico_info_handler(
         void* arg) {
 
     *output_data_size = snprintf(data_buffer, *output_data_size,
-        "board_id=123456789ABCDEF0\n"
-        "wifi_settings_version=%s\n"
-        "name=test-host-name\n"
         "id_last_user_handler=%d\n"
         "max_data_size=%d\n"
-        "implementation=TestC\n",
-        WIFI_SETTINGS_VERSION_STRING,
+        "flash_sector_size=%d\n"
+        "flash_program=0x%08x:0x%08x\n"
+        "flash_reusable=0x%08x:0x%08x\n"
+        "flash_wifi_settings_file=0x%08x:0x%08x\n"
+        "wifi_settings_version=%s\n"
+        "program=Test\n"
+        "feature=Feature\n"
+        "board_id=123456789ABCDEF0\n"
+        "implementation=TestC\n"
+        "type_name=Type\n"
+        "name=test-host-name\n",
         ID_LAST_USER_HANDLER,
-        MAX_DATA_SIZE);
+        MAX_DATA_SIZE,  // max_data_size
+        FAKE_FLASH_SECTOR_SIZE,  // flash_sector_size
+        FAKE_FLASH_PROGRAM_START, FAKE_FLASH_REUSABLE_START, // flash_program_range
+        FAKE_FLASH_REUSABLE_START, FAKE_FLASH_WIFI_SETTINGS_START, // flash_reusable_range
+        FAKE_FLASH_WIFI_SETTINGS_START, FAKE_FLASH_WIFI_SETTINGS_END, // flash_wifi_settings_file_range
+        WIFI_SETTINGS_VERSION_STRING);
+    printf("pico_info_handler returns:\n%s\nEND\n", (const char*) data_buffer);
     return *output_data_size;
 }
 
@@ -204,7 +223,9 @@ int32_t wifi_settings_read_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
+    printf("read_flash_handler: not available in this test program\n");
     return -1;
+
 }
 
 int32_t wifi_settings_write_flash_handler(
@@ -214,8 +235,30 @@ int32_t wifi_settings_write_flash_handler(
         int32_t input_parameter,
         uint32_t* output_data_size,
         void* arg) {
+
+    ASSERT(input_data_size <= MAX_DATA_SIZE);
+    ASSERT(*output_data_size == MAX_DATA_SIZE);
     *output_data_size = 0;
-    return -1;
+
+    const uint32_t base_address = (uint32_t) input_parameter;
+    const uint32_t limit_address = base_address + input_data_size;
+    printf("write_flash_handler: %u bytes to 0x%x\n",
+        (unsigned) input_data_size, (unsigned) base_address);
+
+    const uint32_t alignment_mask = FAKE_FLASH_SECTOR_SIZE - 1;
+    if (((input_data_size & alignment_mask) != 0)
+    || ((base_address & alignment_mask) != 0)) {
+        return PICO_ERROR_BAD_ALIGNMENT;
+    }
+    if ( !((base_address >= FAKE_FLASH_REUSABLE_START)
+            && (base_address < limit_address)
+            && (limit_address <= FAKE_FLASH_WIFI_SETTINGS_START))) {
+        return PICO_ERROR_INVALID_ADDRESS;
+    }
+
+    memcpy(&g_fake_flash[base_address - FAKE_FLASH_REUSABLE_START],
+           data_buffer, input_data_size);
+    return 0;
 }
 
 int32_t wifi_settings_ota_firmware_update_handler1(
@@ -226,7 +269,8 @@ int32_t wifi_settings_ota_firmware_update_handler1(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return -1;
+    printf("ota_firmware_update_handler1: %u %d\n", (unsigned) input_data_size, (int) input_parameter);
+    return -2;
 }
 
 void wifi_settings_ota_firmware_update_handler2(
