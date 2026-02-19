@@ -9,6 +9,7 @@
 import asyncio
 import pytest
 import os
+import shutil
 import sys
 import tempfile
 import typing
@@ -31,9 +32,17 @@ INT_MAX = 0x7fffffff
 
 @pytest.fixture
 def temp_dir():
-    with tempfile.TemporaryDirectory() as td:
-        temp_dir = Path(td)
+    debug_temp_dir = os.getenv("DEBUG_TEMP_DIR", "")
+    if debug_temp_dir:
+        temp_dir = Path(debug_temp_dir)
+        if temp_dir.exists():
+            shutil.rmtree(str(temp_dir))
+        temp_dir.mkdir(exist_ok=True)
         yield temp_dir
+    else:
+        with tempfile.TemporaryDirectory() as td:
+            temp_dir = Path(td)
+            yield temp_dir
 
 class ServerHandle:
     def __init__(self, temp_dir):
@@ -293,3 +302,10 @@ async def test_ota_via_subprocess(temp_dir):
     stdout_text = stdout.decode()
     print(stdout_text)
     assert make_handle.returncode == 0
+
+    # check what was received
+    ota_receive_file = temp_dir / "ota.bin"
+    assert ota_receive_file.is_file()
+    received_data = ota_receive_file.read_bytes()
+    assert received_data.startswith(test_data)
+    assert set(received_data[len(test_data):]) == set([255])

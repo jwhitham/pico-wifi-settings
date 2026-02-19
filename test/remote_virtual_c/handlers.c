@@ -32,10 +32,15 @@
 
 #define FAKE_FLASH_SECTOR_SIZE          (MAX_DATA_SIZE / 2)
 
-#define FAKE_FLASH_PROGRAM_START        (MAX_DATA_SIZE * 8)
-#define FAKE_FLASH_REUSABLE_START       (MAX_DATA_SIZE * 12)
-#define FAKE_FLASH_WIFI_SETTINGS_START  (MAX_DATA_SIZE * 16)
-#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 18)
+// These addresses are relative to the start of Flash
+#define FAKE_FLASH_PROGRAM_START        (0)
+#define FAKE_FLASH_REUSABLE_START       (MAX_DATA_SIZE * 4)
+#define FAKE_FLASH_WIFI_SETTINGS_START  (MAX_DATA_SIZE * 8)
+#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 10)
+// Addresses based on the Flash start address are also used for
+// flash_all, flash_reusable, flash_wifi_settings_file, flash_program,
+// and for the write and ota handlers.
+// logical_offset is the difference at the start of Flash.
 
 static char g_expected_arg_address[1];
 static char g_fake_flash[FAKE_FLASH_WIFI_SETTINGS_START - FAKE_FLASH_REUSABLE_START];
@@ -158,6 +163,7 @@ int32_t wifi_settings_pico_info_handler(
         "id_last_user_handler=%d\n"
         "max_data_size=%d\n"
         "flash_sector_size=%d\n"
+        "flash_all=0x%08x:0x%08x\n"
         "flash_program=0x%08x:0x%08x\n"
         "flash_reusable=0x%08x:0x%08x\n"
         "flash_wifi_settings_file=0x%08x:0x%08x\n"
@@ -171,6 +177,7 @@ int32_t wifi_settings_pico_info_handler(
         ID_LAST_USER_HANDLER,
         MAX_DATA_SIZE,  // max_data_size
         FAKE_FLASH_SECTOR_SIZE,  // flash_sector_size
+        FAKE_FLASH_PROGRAM_START, FAKE_FLASH_WIFI_SETTINGS_END, // flash_all
         FAKE_FLASH_PROGRAM_START, FAKE_FLASH_REUSABLE_START, // flash_program_range
         FAKE_FLASH_REUSABLE_START, FAKE_FLASH_WIFI_SETTINGS_START, // flash_reusable_range
         FAKE_FLASH_WIFI_SETTINGS_START, FAKE_FLASH_WIFI_SETTINGS_END, // flash_wifi_settings_file_range
@@ -314,7 +321,7 @@ int32_t wifi_settings_ota_firmware_update_handler1(
 
     ASSERT(input_data_size <= MAX_DATA_SIZE);
     ASSERT(*output_data_size == MAX_DATA_SIZE);
-    *output_data_size = 0;
+    *output_data_size = input_data_size;
 
     if ((input_data_size != sizeof(ota_firmware_update_parameter_t))
     || (input_parameter != 0)) {
@@ -331,10 +338,16 @@ void wifi_settings_ota_firmware_update_handler2(
         void* arg) {
 
     ASSERT(input_data_size == sizeof(ota_firmware_update_parameter_t));
-    ASSERT(input_parameter == 0);
+    if (input_parameter != 0) {
+        printf("ota_firmware_update_handler: stage 2: input parameter %d != 0: do nothing\n",
+            input_parameter);
+        return;
+    }
 
     int rc = check_ota_parameters(data_buffer, 2);
-    ASSERT(rc == 0);
+    if (rc != 0) {
+        return;
+    }
     ASSERT(input_parameter == 0);
     ota_firmware_update_parameter_t parameter;
     memcpy(&parameter, data_buffer, sizeof(ota_firmware_update_parameter_t));
