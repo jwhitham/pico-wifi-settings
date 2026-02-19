@@ -7,6 +7,11 @@
 #include "wifi_settings.h"
 #include "wifi_settings/wifi_settings_remote.h"
 #include "wifi_settings/wifi_settings_remote_handlers.h"
+
+#ifdef ENABLE_REMOTE_MEMORY_ACCESS
+#include "wifi_settings/wifi_settings_remote_memory_access_handlers.h"
+#endif
+
 #include "remote_virtual.h"
 
 #include <stdbool.h>
@@ -14,6 +19,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #ifndef ENABLE_REMOTE_UPDATE
 #error "ENABLE_REMOTE_UPDATE must be enabled"
@@ -26,9 +33,9 @@
 #define FAKE_FLASH_SECTOR_SIZE          (MAX_DATA_SIZE / 2)
 
 #define FAKE_FLASH_PROGRAM_START        (MAX_DATA_SIZE * 8)
-#define FAKE_FLASH_REUSABLE_START       (MAX_DATA_SIZE * 10)
-#define FAKE_FLASH_WIFI_SETTINGS_START  (MAX_DATA_SIZE * 14)
-#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 16)
+#define FAKE_FLASH_REUSABLE_START       (MAX_DATA_SIZE * 12)
+#define FAKE_FLASH_WIFI_SETTINGS_START  (MAX_DATA_SIZE * 16)
+#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 18)
 
 static char g_expected_arg_address[1];
 static char g_fake_flash[FAKE_FLASH_WIFI_SETTINGS_START - FAKE_FLASH_REUSABLE_START];
@@ -260,6 +267,42 @@ int32_t wifi_settings_write_flash_handler(
            data_buffer, input_data_size);
     return 0;
 }
+static int check_ota_parameters(const uint8_t* data_buffer, int stage) {
+    ota_firmware_update_parameter_t parameter;
+    memcpy(&parameter, data_buffer, sizeof(ota_firmware_update_parameter_t));
+
+    const uint32_t base_src_address = parameter.copy_from.start_address;
+    const uint32_t limit_src_address = base_src_address + parameter.copy_from.size;
+    const uint32_t src_size = parameter.copy_from.size;
+    const uint32_t base_dest_address = parameter.copy_to.start_address;
+    const uint32_t limit_dest_address = base_dest_address + parameter.copy_to.size;
+    const uint32_t dest_size = parameter.copy_to.size;
+
+    printf("ota_firmware_update_handler: stage %d: %u bytes from 0x%x to 0x%x\n",
+        stage,
+        (unsigned) src_size,
+        (unsigned) base_src_address,
+        (unsigned) base_dest_address);
+
+    const uint32_t alignment_mask = FAKE_FLASH_SECTOR_SIZE - 1;
+    if (((src_size & alignment_mask) != 0)
+    || ((base_src_address & alignment_mask) != 0)
+    || ((dest_size & alignment_mask) != 0)
+    || ((base_dest_address & alignment_mask) != 0)) {
+        return PICO_ERROR_BAD_ALIGNMENT;
+    }
+    if ( !((base_src_address >= FAKE_FLASH_REUSABLE_START)
+            && (base_src_address < limit_src_address)
+            && (limit_src_address <= FAKE_FLASH_WIFI_SETTINGS_START)
+            && (src_size == dest_size)
+            && (base_dest_address >= FAKE_FLASH_PROGRAM_START)
+            && (base_dest_address < limit_dest_address)
+            && (limit_dest_address <= FAKE_FLASH_REUSABLE_START))) {
+        return PICO_ERROR_INVALID_ADDRESS;
+    }
+
+    return PICO_ERROR_NONE;
+}
 
 int32_t wifi_settings_ota_firmware_update_handler1(
         uint8_t msg_type,
@@ -268,9 +311,16 @@ int32_t wifi_settings_ota_firmware_update_handler1(
         int32_t input_parameter,
         uint32_t* output_data_size,
         void* arg) {
+
+    ASSERT(input_data_size <= MAX_DATA_SIZE);
+    ASSERT(*output_data_size == MAX_DATA_SIZE);
     *output_data_size = 0;
-    printf("ota_firmware_update_handler1: %u %d\n", (unsigned) input_data_size, (int) input_parameter);
-    return -2;
+
+    if ((input_data_size != sizeof(ota_firmware_update_parameter_t))
+    || (input_parameter != 0)) {
+        return PICO_ERROR_INVALID_ARG;
+    }
+    return check_ota_parameters(data_buffer, 1);
 }
 
 void wifi_settings_ota_firmware_update_handler2(
@@ -279,6 +329,26 @@ void wifi_settings_ota_firmware_update_handler2(
         uint32_t input_data_size,
         int32_t input_parameter,
         void* arg) {
+
+    ASSERT(input_data_size == sizeof(ota_firmware_update_parameter_t));
+    ASSERT(input_parameter == 0);
+
+    int rc = check_ota_parameters(data_buffer, 2);
+    ASSERT(rc == 0);
+    ASSERT(input_parameter == 0);
+    ota_firmware_update_parameter_t parameter;
+    memcpy(&parameter, data_buffer, sizeof(ota_firmware_update_parameter_t));
+
+    const uint32_t base_src_address = parameter.copy_from.start_address;
+    const uint32_t src_size = parameter.copy_from.size;
+    const uint32_t base_dest_address = parameter.copy_to.start_address;
+
+    int fd = open("ota.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        lseek(fd, base_dest_address - FAKE_FLASH_PROGRAM_START, SEEK_SET);
+        write(fd, &g_fake_flash[base_src_address - FAKE_FLASH_REUSABLE_START], src_size);
+        close(fd);
+    }
 }
 
 #endif
