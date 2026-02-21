@@ -329,12 +329,12 @@ async def test_wifi_file_update_reboot_test(temp_dir):
     reboot_file = temp_dir / "reboot.bin"
 
     for (request_size_multiplier, msg_type, parameter, scenario) in [
-        (  0, wifi_settings.ID_UPDATE_HANDLER, 0,        "empty file"),
-        (100, wifi_settings.ID_UPDATE_HANDLER, 0,        "update file only"),
-        ( 99, wifi_settings.ID_UPDATE_HANDLER, 0,        "update partial file"),
+        (  0, wifi_settings.ID_UPDATE_HANDLER, 0,        "update with empty file"),
+        (100, wifi_settings.ID_UPDATE_HANDLER, 0,        "update with new file (all bytes)"),
+        ( 99, wifi_settings.ID_UPDATE_HANDLER, 0,        "update with new file (most bytes)"),
         (  0, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "reboot only"),
-        (100, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "update file and then reboot"),
-        ( 98, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "update partial file and then reboot"),
+        (100, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "update file (all bytes) and then reboot"),
+        ( 98, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "update file (most bytes) and then reboot"),
         (100, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 1, "update file then reboot to bootloader"),
         (  0, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 1, "reboot to bootloader"),
     ]:
@@ -345,29 +345,78 @@ async def test_wifi_file_update_reboot_test(temp_dir):
         client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
         print(f"send {len(request_data)} bytes with msg_type {msg_type} and parameter {parameter}", flush=True)
         (result_data, result_value) = await client.run(msg_type, request_data, parameter)
-        print(f"retturns {len(result_data)} bytes with value {result_value}")
+        print(f"returns {len(result_data)} bytes with value {result_value}")
 
         assert result_value >= 0, result_value
 
         if msg_type == wifi_settings.ID_UPDATE_REBOOT_HANDLER:
+            # File is rewritten if the length is greater than 0
+            # Always reboots
+            # Reboot to bootloader if parameter == 1
+            # result_value is the parameter
             assert reboot_file.exists()
             assert reboot_file.read_bytes()[0] == parameter
             reboot_file.unlink()
             assert result_value == parameter, result_value
             assert len(result_data) == 0
             if len(request_data) != 0:
+                # File is rewritten
                 assert receive_file.exists()
             else:
+                # File is not rewritten
                 assert not receive_file.exists()
         else:
+            # File is always rewritten (even with 0 length)
+            # Never reboots
+            # result_value is the file size
             assert not reboot_file.exists()
             assert receive_file.exists()
             assert result_value == len(request_data), result_value
             assert len(result_data) == 0
 
         if receive_file.exists():
+            # Check file contents
             assert receive_file.read_bytes() == request_data
             receive_file.unlink()
         
         writer.close()
         await writer.wait_closed()
+
+@pytest.mark.asyncio
+async def test_read_write(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+    (client, writer, pico_info) = await connect(server_handle.config)
+
+    expect = []
+    for (test_data_size, offset, scenario) in [
+        (pico_info.flash_sector_size, 0, "small write"),
+        (pico_info.flash_sector_size, pico_info.flash_sector_size, "small write with offset"),
+        (pico_info.max_data_size, pico_info.flash_sector_size * 2, "large write"),
+    ]:
+        # test data
+        test_data = os.urandom(test_data_size)
+        test_address = pico_info.flash_reusable_range[0] + offset
+        print(f"test_read_write: {scenario}: {test_address:08x} {test_address + test_data_size:08x}")
+
+        # write a memory block
+        request_data = test_data
+        parameter = test_address
+        (result_data, result_value) = await client.run(wifi_settings.ID_FLASH_WRITE_HANDLER, request_data, parameter)
+        assert len(result_data) == 0
+        assert result_value == 0
+
+        expect.append((test_address, test_data))
+    
+    for (test_address, test_data) in expect:
+        # read 
+        print(f"test_read_write: readback: {test_address:08x} + {pico_info.logical_offset:08x}")
+        request_data = struct.pack("<II", test_address + pico_info.logical_offset, test_address + len(test_data) + pico_info.logical_offset)
+        parameter = 0
+        (result_data, result_value) = await client.run(wifi_settings.ID_READ_HANDLER, request_data, parameter)
+        assert len(result_data) == len(test_data)
+        assert result_value == 0
+        assert result_data == test_data
+        
+    writer.close()
+    await writer.wait_closed()
