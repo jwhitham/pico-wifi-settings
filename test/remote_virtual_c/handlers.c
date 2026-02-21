@@ -36,7 +36,7 @@
 #define FAKE_FLASH_PROGRAM_START        (0)
 #define FAKE_FLASH_REUSABLE_START       (MAX_DATA_SIZE * 4)
 #define FAKE_FLASH_WIFI_SETTINGS_START  (MAX_DATA_SIZE * 8)
-#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 10)
+#define FAKE_FLASH_WIFI_SETTINGS_END    (MAX_DATA_SIZE * 9)
 // Addresses based on the Flash start address are also used for
 // flash_all, flash_reusable, flash_wifi_settings_file, flash_program,
 // and for the write and ota handlers.
@@ -194,18 +194,18 @@ int32_t wifi_settings_update_handler(
         uint32_t* output_data_size,
         void* arg) {
     *output_data_size = 0;
-    return -1;
-}
+    printf("wifi_settings_update_handler %d %u\n", (int) input_parameter, (unsigned) input_data_size);
 
-int32_t wifi_settings_reboot_handler(
-        uint8_t msg_type,
-        uint8_t* data_buffer,
-        uint32_t input_data_size,
-        int32_t input_parameter,
-        uint32_t* output_data_size,
-        void* arg) {
-    *output_data_size = 0;
-    return -1;
+    if (input_parameter != 0) {
+        return PICO_ERROR_INVALID_ARG;
+    }
+
+    int fd = open("wifi_settings.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        write(fd, data_buffer, input_data_size);
+        close(fd);
+    }
+    return (int32_t) input_data_size;
 }
 
 int32_t wifi_settings_update_reboot_handler1(
@@ -215,8 +215,9 @@ int32_t wifi_settings_update_reboot_handler1(
         int32_t input_parameter,
         uint32_t* output_data_size,
         void* arg) {
-    *output_data_size = 0;
-    return -1;
+    printf("wifi_settings_update_reboot_handler1 %d %u\n", (int) input_parameter, (unsigned) input_data_size);
+    *output_data_size = input_data_size;
+    return input_parameter;
 }
 
 void wifi_settings_update_reboot_handler2(
@@ -226,6 +227,22 @@ void wifi_settings_update_reboot_handler2(
         int32_t input_parameter,
         void* arg)
 {
+    printf("wifi_settings_update_reboot_handler2 %d %u\n", (int) input_parameter, (unsigned) input_data_size);
+
+    if (input_data_size != 0) {
+        int fd = open("wifi_settings.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            write(fd, data_buffer, input_data_size);
+            close(fd);
+        }
+    }
+
+    int fd = open("reboot.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        uint8_t flag = (uint8_t) input_parameter;   // 1 = bootloader 0 = just reboot
+        write(fd, &flag, 1);
+        close(fd);
+    }
 }
 
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS

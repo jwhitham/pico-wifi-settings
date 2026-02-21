@@ -115,19 +115,20 @@ async def test_info(temp_dir):
     assert pico_info.max_data_size >= 1024
 
 async def connect(config: remote_picotool.BaseRemotePicotoolCfg) -> typing.Tuple[
-                remote_picotool.Client, asyncio.StreamWriter, int]:
-    # Make a new connection to the server and get the max_data_size
+                remote_picotool.Client, asyncio.StreamWriter, wifi_settings.PicoInfo]:
+    # Make a new connection to the server and get the max_data_size and other info
     reader, writer = await remote_picotool.get_pico_connection(config)
     client = remote_picotool.Client(config.update_secret_hash, reader, writer)
     (result_data, result_value) = await client.run(wifi_settings.ID_PICO_INFO_HANDLER)
-    max_data_size = wifi_settings.PicoInfo(result_data).max_data_size
-    return (client, writer, max_data_size)
+    pico_info = wifi_settings.PicoInfo(result_data)
+    return (client, writer, pico_info)
 
 @pytest.mark.asyncio
 async def test_out_of_range_data(temp_dir):
     server_handle = ServerHandle(temp_dir)
     await server_handle.start()
-    (client, writer, max_data_size) = await connect(server_handle.config)
+    (client, writer, pico_info) = await connect(server_handle.config)
+    max_data_size = pico_info.max_data_size
     writer.close()
     await writer.wait_closed()
 
@@ -152,7 +153,8 @@ async def test_out_of_range_data(temp_dir):
 async def test_echo_xor_count(temp_dir):
     server_handle = ServerHandle(temp_dir)
     await server_handle.start()
-    (client, writer, max_data_size) = await connect(server_handle.config)
+    (client, writer, pico_info) = await connect(server_handle.config)
+    max_data_size = pico_info.max_data_size
 
     # Test - sending and receiving data of various sizes
     sizes = [16, 1, 15, 17, 0, 500, 511, 513,
@@ -186,7 +188,8 @@ async def test_echo_xor_count(temp_dir):
 async def test_gen_output(temp_dir):
     server_handle = ServerHandle(temp_dir)
     await server_handle.start()
-    (client, writer, max_data_size) = await connect(server_handle.config)
+    (client, writer, pico_info) = await connect(server_handle.config)
+    max_data_size = pico_info.max_data_size
 
     # Test - receiving more data than was sent
     sizes = [16, 1, 15, 17, 0, 500, 511, 513, max_data_size, max_data_size - 1,
@@ -223,7 +226,8 @@ async def test_gen_output(temp_dir):
 async def test_bounds_check(temp_dir):
     server_handle = ServerHandle(temp_dir)
     await server_handle.start()
-    (client, writer, max_data_size) = await connect(server_handle.config)
+    (client, writer, pico_info) = await connect(server_handle.config)
+    max_data_size = pico_info.max_data_size
 
     # Test - edge cases for parameters and result values
     for (parameter, expected_result) in {
@@ -309,3 +313,61 @@ async def test_ota_via_subprocess(temp_dir):
     received_data = ota_receive_file.read_bytes()
     assert received_data.startswith(test_data)
     assert set(received_data[len(test_data):]) == set([255])
+
+@pytest.mark.asyncio
+async def test_wifi_file_update_reboot_test(temp_dir):
+    server_handle = ServerHandle(temp_dir)
+    await server_handle.start()
+    (client, writer, pico_info) = await connect(server_handle.config)
+    (file_start, file_end) = pico_info.flash_wifi_settings_file_range
+    file_size = min(file_end - file_start, pico_info.max_data_size)
+    writer.close()
+    await writer.wait_closed()
+    print(f"file size: {file_size}")
+
+    receive_file = temp_dir / "wifi_settings.bin"
+    reboot_file = temp_dir / "reboot.bin"
+
+    for (request_size_multiplier, msg_type, parameter, scenario) in [
+        (  0, wifi_settings.ID_UPDATE_HANDLER, 0,        "empty file"),
+        (100, wifi_settings.ID_UPDATE_HANDLER, 0,        "update file only"),
+        ( 99, wifi_settings.ID_UPDATE_HANDLER, 0,        "update partial file"),
+        (  0, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "reboot only"),
+        (100, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "update file and then reboot"),
+        ( 98, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 0, "update partial file and then reboot"),
+        (100, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 1, "update file then reboot to bootloader"),
+        (  0, wifi_settings.ID_UPDATE_REBOOT_HANDLER, 1, "reboot to bootloader"),
+    ]:
+        print(f"test_wifi_file_update_reboot_test: {scenario}")
+        request_data = os.urandom((file_size * request_size_multiplier) // 100)
+
+        reader, writer = await remote_picotool.get_pico_connection(server_handle.config)
+        client = remote_picotool.Client(server_handle.config.update_secret_hash, reader, writer)
+        print(f"send {len(request_data)} bytes with msg_type {msg_type} and parameter {parameter}", flush=True)
+        (result_data, result_value) = await client.run(msg_type, request_data, parameter)
+        print(f"retturns {len(result_data)} bytes with value {result_value}")
+
+        assert result_value >= 0, result_value
+
+        if msg_type == wifi_settings.ID_UPDATE_REBOOT_HANDLER:
+            assert reboot_file.exists()
+            assert reboot_file.read_bytes()[0] == parameter
+            reboot_file.unlink()
+            assert result_value == parameter, result_value
+            assert len(result_data) == 0
+            if len(request_data) != 0:
+                assert receive_file.exists()
+            else:
+                assert not receive_file.exists()
+        else:
+            assert not reboot_file.exists()
+            assert receive_file.exists()
+            assert result_value == len(request_data), result_value
+            assert len(result_data) == 0
+
+        if receive_file.exists():
+            assert receive_file.read_bytes() == request_data
+            receive_file.unlink()
+        
+        writer.close()
+        await writer.wait_closed()
