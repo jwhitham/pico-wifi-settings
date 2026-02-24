@@ -246,6 +246,9 @@ void wifi_settings_update_reboot_handler2(
 }
 
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
+typedef struct read_parameter_t {
+    wifi_settings_logical_range_t copy_from;
+} read_parameter_t;
 int32_t wifi_settings_read_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
@@ -253,8 +256,31 @@ int32_t wifi_settings_read_handler(
         int32_t input_parameter,
         uint32_t* output_data_size,
         void* arg) {
+
     *output_data_size = 0;
-    printf("read_flash_handler: not available in this test program\n");
+    if ((input_data_size != sizeof(read_parameter_t))
+    || (input_parameter != 0)) {
+        return PICO_ERROR_INVALID_ARG;
+    }
+
+    read_parameter_t parameter;
+    memcpy(&parameter, data_buffer, sizeof(read_parameter_t));
+
+    const uint32_t base_address = (uint32_t) input_parameter;
+    const uint32_t limit_address = base_address + input_data_size;
+    printf("write_flash_handler: %u bytes to 0x%x\n",
+        (unsigned) input_data_size, (unsigned) base_address);
+
+    const uint32_t alignment_mask = FAKE_FLASH_SECTOR_SIZE - 1;
+    if (((input_data_size & alignment_mask) != 0)
+    || ((base_address & alignment_mask) != 0)) {
+        return PICO_ERROR_BAD_ALIGNMENT;
+    }
+    if ( !((base_address >= FAKE_FLASH_REUSABLE_START)
+            && (base_address < limit_address)
+            && (limit_address <= FAKE_FLASH_WIFI_SETTINGS_START))) {
+        return PICO_ERROR_INVALID_ADDRESS;
+    }
     return -1;
 
 }

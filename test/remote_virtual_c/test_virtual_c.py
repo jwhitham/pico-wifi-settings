@@ -10,6 +10,7 @@ import asyncio
 import pytest
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import typing
@@ -409,13 +410,13 @@ async def test_read_write(temp_dir):
         expect.append((test_address, test_data))
     
     for (test_address, test_data) in expect:
-        # read 
+        # read it back
         print(f"test_read_write: readback: {test_address:08x} + {pico_info.logical_offset:08x}")
         request_data = struct.pack("<II", test_address + pico_info.logical_offset, test_address + len(test_data) + pico_info.logical_offset)
         parameter = 0
         (result_data, result_value) = await client.run(wifi_settings.ID_READ_HANDLER, request_data, parameter)
-        assert len(result_data) == len(test_data)
         assert result_value == 0
+        assert len(result_data) == len(test_data)
         assert result_data == test_data
         
     writer.close()
