@@ -411,11 +411,11 @@ async def test_read_write(temp_dir):
     
     for (test_address, test_data) in expect:
         # read it back
-        print(f"test_read_write: readback: {test_address:08x} + {pico_info.logical_offset:08x}")
-        request_data = struct.pack("<II", test_address + pico_info.logical_offset, test_address + len(test_data) + pico_info.logical_offset)
+        print(f"test_read_write: readback: {test_address:08x} + {pico_info.logical_offset:08x} size {len(test_data):08x}")
+        request_data = struct.pack("<II", test_address + pico_info.logical_offset, len(test_data))
         parameter = 0
         (result_data, result_value) = await client.run(wifi_settings.ID_READ_HANDLER, request_data, parameter)
-        assert result_value == 0
+        assert result_value == len(test_data)
         assert len(result_data) == len(test_data)
         assert result_data == test_data
         

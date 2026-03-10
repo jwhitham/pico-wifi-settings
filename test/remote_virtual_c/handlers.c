@@ -40,7 +40,8 @@
 // Addresses based on the Flash start address are also used for
 // flash_all, flash_reusable, flash_wifi_settings_file, flash_program,
 // and for the write and ota handlers.
-// logical_offset is the difference at the start of Flash.
+// logical_offset is the difference at the start of Flash and this affects read operations.
+#define LOGICAL_OFFSET                  0x12345600
 
 static char g_expected_arg_address[1];
 static char g_fake_flash[FAKE_FLASH_WIFI_SETTINGS_START - FAKE_FLASH_REUSABLE_START];
@@ -167,6 +168,7 @@ int32_t wifi_settings_pico_info_handler(
         "flash_program=0x%08x:0x%08x\n"
         "flash_reusable=0x%08x:0x%08x\n"
         "flash_wifi_settings_file=0x%08x:0x%08x\n"
+        "logical_offset=0x%08x\n"
         "wifi_settings_version=%s\n"
         "program=Test\n"
         "feature=Feature\n"
@@ -181,6 +183,7 @@ int32_t wifi_settings_pico_info_handler(
         FAKE_FLASH_PROGRAM_START, FAKE_FLASH_REUSABLE_START, // flash_program_range
         FAKE_FLASH_REUSABLE_START, FAKE_FLASH_WIFI_SETTINGS_START, // flash_reusable_range
         FAKE_FLASH_WIFI_SETTINGS_START, FAKE_FLASH_WIFI_SETTINGS_END, // flash_wifi_settings_file_range
+        LOGICAL_OFFSET,
         WIFI_SETTINGS_VERSION_STRING);
     printf("pico_info_handler returns:\n%s\nEND\n", (const char*) data_buffer);
     return *output_data_size;
@@ -246,9 +249,14 @@ void wifi_settings_update_reboot_handler2(
 }
 
 #ifdef ENABLE_REMOTE_MEMORY_ACCESS
-typedef struct read_parameter_t {
-    wifi_settings_logical_range_t copy_from;
-} read_parameter_t;
+typedef struct test_wifi_settings_logical_range_t {
+    uint32_t start_address; // <- We can't use the real wifi_settings_logical_range_t because this pointer might not be 32-bit
+    uint32_t size;
+} test_wifi_settings_logical_range_t;
+typedef struct test_read_parameter_t {
+    test_wifi_settings_logical_range_t copy_from;
+} test_read_parameter_t;
+
 int32_t wifi_settings_read_handler(
         uint8_t msg_type,
         uint8_t* data_buffer,
@@ -257,32 +265,36 @@ int32_t wifi_settings_read_handler(
         uint32_t* output_data_size,
         void* arg) {
 
-    *output_data_size = 0;
-    if ((input_data_size != sizeof(read_parameter_t))
+    if ((input_data_size != sizeof(test_read_parameter_t))
     || (input_parameter != 0)) {
+        *output_data_size = 0;
         return PICO_ERROR_INVALID_ARG;
     }
 
-    read_parameter_t parameter;
-    memcpy(&parameter, data_buffer, sizeof(read_parameter_t));
-
-    const uint32_t base_address = (uint32_t) input_parameter;
-    const uint32_t limit_address = base_address + input_data_size;
-    printf("write_flash_handler: %u bytes to 0x%x\n",
-        (unsigned) input_data_size, (unsigned) base_address);
-
-    const uint32_t alignment_mask = FAKE_FLASH_SECTOR_SIZE - 1;
-    if (((input_data_size & alignment_mask) != 0)
-    || ((base_address & alignment_mask) != 0)) {
-        return PICO_ERROR_BAD_ALIGNMENT;
+    test_read_parameter_t parameter;
+    memcpy(&parameter, data_buffer, sizeof(parameter));
+    if (parameter.copy_from.size > *output_data_size) {
+        // Truncate requested size to fit the output buffer
+        parameter.copy_from.size = *output_data_size;
+    } else {
+        // Truncate output size to fit the requested size
+        *output_data_size = parameter.copy_from.size;
     }
-    if ( !((base_address >= FAKE_FLASH_REUSABLE_START)
+
+    const uint32_t base_address = parameter.copy_from.start_address;
+    const uint32_t limit_address = base_address + parameter.copy_from.size;
+    printf("read_flash_handler: %u bytes from 0x%x\n",
+        (unsigned) parameter.copy_from.size, (unsigned) base_address);
+
+    if ( !((base_address >= (FAKE_FLASH_REUSABLE_START + LOGICAL_OFFSET))
             && (base_address < limit_address)
-            && (limit_address <= FAKE_FLASH_WIFI_SETTINGS_START))) {
+            && (limit_address <= (FAKE_FLASH_WIFI_SETTINGS_END + LOGICAL_OFFSET)))) {
         return PICO_ERROR_INVALID_ADDRESS;
     }
-    return -1;
-
+    memcpy(data_buffer,
+           &g_fake_flash[base_address - FAKE_FLASH_REUSABLE_START - LOGICAL_OFFSET],
+           parameter.copy_from.size);
+    return (int32_t) parameter.copy_from.size;
 }
 
 int32_t wifi_settings_write_flash_handler(
